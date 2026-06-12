@@ -20,6 +20,36 @@ class FakeLLMAgent:
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
+class EmptyThenValidLLMAgent:
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=None),
+                        finish_reason="length",
+                    )
+                ]
+            )
+        return FakeLLMAgent().chat()
+
+
+class EmptyLLMAgent:
+    def chat(self, **_kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=None),
+                    finish_reason="length",
+                )
+            ]
+        )
+
+
 class FakeVideoAgent:
     def render_report_video(self, _expense_data):
         return VideoRenderResult(
@@ -149,3 +179,54 @@ def test_generate_video_requires_a_saved_transaction():
         json={"transactions": [], "language_code": "en-IN"},
     )
     assert response.status_code == 422
+
+
+def test_generate_report_copy_retries_empty_high_reasoning_response(monkeypatch):
+    agent = EmptyThenValidLLMAgent()
+    monkeypatch.setattr(video_routes, "llm_agent", agent)
+
+    report = video_routes.generate_report_copy(
+        [
+            video_routes.ReportTransaction(
+                date="2026-06-12",
+                amount=2450,
+                category="utilities",
+                description="June electricity bill",
+            )
+        ],
+        [],
+        None,
+    )
+
+    assert report["title"] == "A Clear Family Spend"
+    assert len(agent.calls) == 2
+    assert agent.calls[0]["reasoning_effort"] == "high"
+    assert agent.calls[0]["max_tokens"] == 1800
+    assert agent.calls[1]["reasoning_effort"] == "low"
+
+
+def test_generate_report_copy_uses_fallback_when_sarvam_content_is_empty(
+    monkeypatch,
+):
+    monkeypatch.setattr(video_routes, "llm_agent", EmptyLLMAgent())
+
+    report = video_routes.generate_report_copy(
+        [
+            video_routes.ReportTransaction(
+                date="2026-06-12",
+                amount=2450,
+                category="utilities",
+                description="June electricity bill",
+            )
+        ],
+        [],
+        "June at Home",
+    )
+
+    assert report == {
+        "title": "June at Home",
+        "headline": "₹2,450 across 1 expense",
+        "insight": "Utilities was the largest spending category.",
+        "advice": "Review the largest category together before the next month begins.",
+        "conversation_summary": "No financial questions were included in this report.",
+    }

@@ -112,7 +112,9 @@ def video_path(video_id: str) -> Path:
     return path
 
 
-def parse_report_copy(content: str, fallback: dict) -> dict:
+def parse_report_copy(content: Optional[str], fallback: dict) -> dict:
+    if not content:
+        return fallback
     start = content.find("{")
     end = content.rfind("}") + 1
     if start < 0 or end <= start:
@@ -127,6 +129,20 @@ def parse_report_copy(content: str, fallback: dict) -> dict:
     }
 
 
+def completion_content(response) -> Optional[str]:
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return None
+    return getattr(getattr(choices[0], "message", None), "content", None)
+
+
+def completion_finish_reason(response) -> str:
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return "missing_choice"
+    return str(getattr(choices[0], "finish_reason", "unknown"))
+
+
 def generate_report_copy(
     transactions: list[ReportTransaction],
     conversations: list[ReportConversation],
@@ -139,9 +155,12 @@ def generate_report_copy(
         )
     top_category = max(category_totals, key=category_totals.get)
     total_amount = sum(item.amount for item in transactions)
+    expense_label = "expense" if len(transactions) == 1 else "expenses"
     fallback = {
         "title": requested_title or "Our Household Money Story",
-        "headline": f"₹{total_amount:,.0f} across {len(transactions)} expenses",
+        "headline": (
+            f"₹{total_amount:,.0f} across {len(transactions)} {expense_label}"
+        ),
         "insight": f"{top_category.title()} was the largest spending category.",
         "advice": "Review the largest category together before the next month begins.",
         "conversation_summary": (
@@ -159,33 +178,49 @@ def generate_report_copy(
             "top_category": top_category,
         },
     }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You create concise, evidence-grounded household finance report "
+                "copy. Use only the supplied transactions, computed totals, and "
+                "conversation answers. Never invent income or savings. Return only "
+                "a JSON object with title, headline, insight, advice, and "
+                "conversation_summary. Keep title under 6 words and every other "
+                "field under 22 words. Write in clear English so it can be translated."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(prompt_data, ensure_ascii=False),
+        },
+    ]
     response = llm_agent.chat(
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You create concise, evidence-grounded household finance report "
-                    "copy. Use only the supplied transactions, computed totals, and "
-                    "conversation answers. Never invent income or savings. Return only "
-                    "a JSON object with title, headline, insight, advice, and "
-                    "conversation_summary. Keep title under 6 words and every other "
-                    "field under 22 words. Write in clear English so it can be translated."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(prompt_data, ensure_ascii=False),
-            },
-        ],
+        messages=messages,
         model="sarvam-105b",
         temperature=0.2,
-        max_tokens=550,
+        max_tokens=1800,
         reasoning_effort="high",
     )
-    return parse_report_copy(
-        response.choices[0].message.content,
-        fallback,
-    )
+    content = completion_content(response)
+    if not content:
+        finish_reason = completion_finish_reason(response)
+        print(
+            "Sarvam 105B returned no final report copy "
+            f"(finish_reason={finish_reason}); retrying with low reasoning"
+        )
+        retry = llm_agent.chat(
+            messages=messages,
+            model="sarvam-105b",
+            temperature=0.1,
+            max_tokens=700,
+            reasoning_effort="low",
+        )
+        content = completion_content(retry)
+        if not content:
+            print("Sarvam 105B retry returned no final report copy; using fallback")
+
+    return parse_report_copy(content, fallback)
 
 
 def render_video(request: VideoRequest) -> VideoResponse:
