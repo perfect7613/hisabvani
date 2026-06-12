@@ -4,6 +4,9 @@ from backend.main import app
 import os
 import wave
 import io
+from types import SimpleNamespace
+
+import backend.routes as voice_routes
 
 
 @pytest.fixture
@@ -39,6 +42,106 @@ def test_health_endpoint(client):
 def test_voice_query_missing_audio(client):
     response = client.post("/api/voice-query")
     assert response.status_code == 422
+
+
+class FakeSpeechAgent:
+    def transcribe(self, **_kwargs):
+        return SimpleNamespace(
+            transcript="Where did we spend the most?",
+            language_code="en-IN",
+        )
+
+
+class EmptyThenValidLLMAgent:
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=None, refusal=None),
+                        finish_reason="length",
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="Groceries were the largest saved expense.",
+                        refusal=None,
+                    ),
+                    finish_reason="stop",
+                )
+            ]
+        )
+
+
+class EmptyLLMAgent:
+    def chat(self, **_kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=None, refusal=None),
+                    finish_reason="length",
+                )
+            ]
+        )
+
+
+def test_voice_query_retries_when_high_reasoning_has_no_content(
+    client,
+    sample_audio_wav,
+    monkeypatch,
+):
+    agent = EmptyThenValidLLMAgent()
+    monkeypatch.setattr(voice_routes, "speech_agent", FakeSpeechAgent())
+    monkeypatch.setattr(voice_routes, "llm_agent", agent)
+
+    response = client.post(
+        "/api/voice-query",
+        files={"audio": ("test.wav", sample_audio_wav, "audio/wav")},
+        data={
+            "household_context": (
+                '{"transactions":[{"amount":850,"category":"groceries"}]}'
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["response"] == (
+        "Groceries were the largest saved expense."
+    )
+    assert len(agent.calls) == 2
+    assert agent.calls[0]["reasoning_effort"] == "high"
+    assert agent.calls[0]["max_tokens"] == 2400
+    assert agent.calls[1]["reasoning_effort"] == "low"
+
+
+def test_voice_query_returns_string_fallback_after_empty_retry(
+    client,
+    sample_audio_wav,
+    monkeypatch,
+):
+    monkeypatch.setattr(voice_routes, "speech_agent", FakeSpeechAgent())
+    monkeypatch.setattr(voice_routes, "llm_agent", EmptyLLMAgent())
+
+    response = client.post(
+        "/api/voice-query",
+        files={"audio": ("test.wav", sample_audio_wav, "audio/wav")},
+        data={
+            "household_context": (
+                '{"transactions":[{"amount":850,"category":"groceries"}]}'
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert isinstance(response.json()["response"], str)
+    assert "1 transaction" in response.json()["response"]
 
 
 def test_voice_query_with_real_audio(client, sample_audio_wav):

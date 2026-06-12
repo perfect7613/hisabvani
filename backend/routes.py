@@ -12,6 +12,27 @@ speech_agent = SpeechAgent(api_key=os.getenv("SARVAM_API_KEY"))
 llm_agent = LLMAgent(api_key=os.getenv("SARVAM_API_KEY"))
 
 
+def completion_text(response) -> str:
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    if not message:
+        return ""
+    return str(
+        getattr(message, "content", None)
+        or getattr(message, "refusal", None)
+        or ""
+    ).strip()
+
+
+def completion_finish_reason(response) -> str:
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return "missing_choice"
+    return str(getattr(choices[0], "finish_reason", "unknown"))
+
+
 class VoiceQueryResponse(BaseModel):
     record_id: str
     transcript: str
@@ -63,35 +84,68 @@ async def voice_query(
             ensure_ascii=False,
         )
 
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are HisabVani, a careful financial reasoning assistant "
+                    "for Indian households. Answer in the same language and script "
+                    "as the user's question. Ground every numerical claim in the "
+                    "provided household ledger. Never invent income, budgets, dates, "
+                    "or expenses. If the ledger is insufficient, say exactly what is "
+                    "missing. Give a direct answer, brief evidence, and one practical "
+                    "next step. Do not give regulated investment or tax advice."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"HOUSEHOLD LEDGER:\n{ledger_json}\n\n"
+                    f"QUESTION:\n{transcript}"
+                ),
+            },
+        ]
         llm_response = llm_agent.chat(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are HisabVani, a careful financial reasoning assistant "
-                        "for Indian households. Answer in the same language and script "
-                        "as the user's question. Ground every numerical claim in the "
-                        "provided household ledger. Never invent income, budgets, dates, "
-                        "or expenses. If the ledger is insufficient, say exactly what is "
-                        "missing. Give a direct answer, brief evidence, and one practical "
-                        "next step. Do not give regulated investment or tax advice."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"HOUSEHOLD LEDGER:\n{ledger_json}\n\n"
-                        f"QUESTION:\n{transcript}"
-                    ),
-                },
-            ],
+            messages=messages,
             model="sarvam-105b",
             temperature=0.25,
-            max_tokens=1200,
+            max_tokens=2400,
             reasoning_effort="high",
         )
 
-        response_text = llm_response.choices[0].message.content
+        response_text = completion_text(llm_response)
+        if not response_text:
+            finish_reason = completion_finish_reason(llm_response)
+            print(
+                "Sarvam 105B returned no final Ask response "
+                f"(finish_reason={finish_reason}); retrying with low reasoning"
+            )
+            retry_response = llm_agent.chat(
+                messages=messages,
+                model="sarvam-105b",
+                temperature=0.2,
+                max_tokens=1200,
+                reasoning_effort="low",
+            )
+            response_text = completion_text(retry_response)
+
+        if not response_text:
+            print("Sarvam 105B Ask retry returned no final response; using fallback")
+            if transactions:
+                transaction_label = (
+                    "transaction" if len(transactions) == 1 else "transactions"
+                )
+                response_text = (
+                    "I could not generate the detailed analysis just now. "
+                    f"Your saved ledger contains {len(transactions)} "
+                    f"{transaction_label}. "
+                    "Please retry your question in a moment."
+                )
+            else:
+                response_text = (
+                    "I need at least one saved expense to answer this from your "
+                    "household ledger. Record an expense or scan a bill, then try again."
+                )
 
         return VoiceQueryResponse(
             record_id=f"ask-{uuid4()}",
