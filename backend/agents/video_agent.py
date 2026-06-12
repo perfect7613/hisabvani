@@ -18,13 +18,20 @@ class VideoAgent:
             description = expense_data.get("description", "")
             date = expense_data.get("date", "Today")
 
-            script = f'''#!/bin/bash
+            # Write text to files to avoid FFmpeg escaping issues
+            sandbox.fs.upload_file_stream(title.encode(), "/home/daytona/title.txt")
+            sandbox.fs.upload_file_stream(f"Rs.{int(amount)}".encode(), "/home/daytona/amount.txt")
+            sandbox.fs.upload_file_stream(category.encode(), "/home/daytona/category.txt")
+            sandbox.fs.upload_file_stream(description.encode(), "/home/daytona/description.txt")
+            sandbox.fs.upload_file_stream(date.encode(), "/home/daytona/date.txt")
+
+            script = '''#!/bin/bash
 ffmpeg -y -f lavfi -i "color=c=0x1a1a2e:s=1280x720:d=5" \\
-  -vf "drawtext=text='{title}':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=180:enable='between(t,0.3,5)',\\
-drawtext=text='Rs.{amount}':fontsize=80:fontcolor=0xf59e0b:x=(w-text_w)/2:y=300:enable='between(t,0.8,5)',\\
-drawtext=text='{category}':fontsize=36:fontcolor=0x94a3b8:x=(w-text_w)/2:y=420:enable='between(t,1.2,5)',\\
-drawtext=text='{description}':fontsize=28:fontcolor=0xcbd5e1:x=(w-text_w)/2:y=500:enable='between(t,1.5,5)',\\
-drawtext=text='{date}':fontsize=24:fontcolor=0x64748b:x=(w-text_w)/2:y=600:enable='between(t,1.8,5)'" \\
+  -vf "drawtext=textfile=/home/daytona/title.txt:fontsize=48:fontcolor=white:x=(w-text_w)/2:y=180:enable='between(t,0.3,5)',\\
+drawtext=textfile=/home/daytona/amount.txt:fontsize=80:fontcolor=0xf59e0b:x=(w-text_w)/2:y=300:enable='between(t,0.8,5)',\\
+drawtext=textfile=/home/daytona/category.txt:fontsize=36:fontcolor=0x94a3b8:x=(w-text_w)/2:y=420:enable='between(t,1.2,5)',\\
+drawtext=textfile=/home/daytona/description.txt:fontsize=28:fontcolor=0xcbd5e1:x=(w-text_w)/2:y=500:enable='between(t,1.5,5)',\\
+drawtext=textfile=/home/daytona/date.txt:fontsize=24:fontcolor=0x64748b:x=(w-text_w)/2:y=600:enable='between(t,1.8,5)'" \\
   -c:v libx264 -pix_fmt yuv420p -r 30 /home/daytona/output.mp4
 '''
             sandbox.fs.upload_file_stream(script.encode(), "/home/daytona/render.sh")
