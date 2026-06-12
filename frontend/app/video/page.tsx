@@ -228,7 +228,7 @@ export default function VideoReports() {
   };
 
   return (
-    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-[90rem] px-5 py-10 sm:px-8 lg:py-14">
+    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
       <div className="mb-10 grid gap-7 lg:grid-cols-[1fr_0.62fr] lg:items-end">
         <div>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-leaf/20 bg-leaf/8 px-4 py-2 text-sm font-bold text-leaf">
