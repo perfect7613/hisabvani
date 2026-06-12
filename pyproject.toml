@@ -1,0 +1,27 @@
+[project]
+name = "hisabvani"
+version = "0.1.0"
+description = "Voice + Vision Family Finance Agent for Indian Households"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "python-dotenv>=1.1.0",
+    "python-multipart>=0.0.18",
+    "httpx>=0.28.0",
+    "requests>=2.32.0",
+    "pydantic>=2.11.0",
+    "sarvamai>=0.1.0",
+    "daytona>=0.1.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.9.0",
+    "numpy>=1.26.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pillow>=12.2.0",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+]
