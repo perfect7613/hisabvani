@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, Square, ArrowLeft, RotateCcw, BookOpen } from 'lucide-react';
-import Link from 'next/link';
+import { Mic, Square, RotateCcw, BookOpen } from 'lucide-react';
+import { apiUrl, readApiError } from '@/lib/api';
+import { ServiceNotice } from '../components/service-notice';
 
 const CATEGORY_EMOJI: Record<string, string> = {
   food: '🍛',
@@ -21,7 +22,6 @@ function AnimatedAmount({ target }: { target: number }) {
   const [display, setDisplay] = useState(0);
 
   useEffect(() => {
-    let start = 0;
     const duration = 800;
     const startTime = performance.now();
 
@@ -49,11 +49,13 @@ export default function VoiceExpense() {
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [error, setError] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const startRecording = async () => {
+    setError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -80,6 +82,7 @@ export default function VoiceExpense() {
       setIsRecording(true);
     } catch (err) {
       console.error('Microphone error:', err);
+      setError('Microphone access was blocked. Allow microphone permission and try again.');
     }
   };
 
@@ -93,15 +96,19 @@ export default function VoiceExpense() {
   const submitExpense = async () => {
     if (!audioBlob) return;
     setIsLoading(true);
+    setError('');
 
     const formData = new FormData();
     formData.append('audio', audioBlob, 'expense.wav');
 
     try {
-      const res = await fetch('http://localhost:8000/api/voice-expense', {
+      const res = await fetch(apiUrl('/api/voice-expense'), {
         method: 'POST',
         body: formData,
       });
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'HisabVani could not log this expense.'));
+      }
       const data = await res.json();
       setTranscript(data.transcript);
       setAmount(data.amount);
@@ -110,7 +117,7 @@ export default function VoiceExpense() {
       setConfirmation(data.confirmation);
     } catch (err) {
       console.error('Error:', err);
-      setConfirmation('Error processing your expense. Please try again.');
+      setError(err instanceof Error ? err.message : 'Error processing your expense. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -124,41 +131,38 @@ export default function VoiceExpense() {
     setDescription('');
     setConfirmation('');
     setRecordingTime(0);
+    setError('');
   };
 
   const formatTime = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
+    <div className="min-h-[calc(100vh-70px)] bg-background relative overflow-hidden">
       {/* Decorative corner marks */}
       <div className="absolute top-6 left-6 w-8 h-8 border-t-2 border-l-2 border-primary/20" />
       <div className="absolute top-6 right-6 w-8 h-8 border-t-2 border-r-2 border-primary/20" />
       <div className="absolute bottom-6 left-6 w-8 h-8 border-b-2 border-l-2 border-primary/20" />
       <div className="absolute bottom-6 right-6 w-8 h-8 border-b-2 border-r-2 border-primary/20" />
 
-      {/* Header */}
-      <header className="border-b border-border bg-white/60 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-5">
-          <Link
-            href="/"
-            className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground hover:text-primary hover:border-primary transition-all"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div className="flex items-center gap-3">
-            <BookOpen className="w-5 h-5 text-primary" />
+      <main className="max-w-3xl mx-auto px-6 py-10 pb-32">
+        <div className="mb-10">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="grid size-11 place-items-center rounded-2xl bg-ink text-saffron">
+              <BookOpen className="size-5" />
+            </span>
             <div>
-              <h1 className="text-xl font-display font-bold text-foreground leading-tight">
-                Voice Khata
-              </h1>
-              <p className="text-xs text-muted tracking-wide uppercase">Quick Expense Journal</p>
+              <p className="eyebrow">Quick expense journal</p>
+              <p className="text-sm text-muted">Voice khata</p>
             </div>
           </div>
+          <h1 className="text-5xl font-bold leading-[0.95] tracking-[-0.05em] sm:text-6xl">
+            Speak it once. Consider it written.
+          </h1>
+          <div className="mt-6">
+            <ServiceNotice compact />
+          </div>
         </div>
-      </header>
-
-      <main className="max-w-3xl mx-auto px-6 py-10 pb-32">
         {/* Intro text */}
         {!audioBlob && !confirmation && (
           <motion.div
@@ -303,6 +307,11 @@ export default function VoiceExpense() {
             )}
           </AnimatePresence>
         </motion.div>
+        {error && (
+          <p role="alert" className="mx-auto mt-7 max-w-xl rounded-2xl border border-red-900/10 bg-red-50 p-4 text-center text-sm font-semibold text-red-900">
+            {error}
+          </p>
+        )}
 
         {/* Ledger Entry */}
         <AnimatePresence>

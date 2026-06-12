@@ -32,7 +32,8 @@ def test_root_endpoint(client):
 def test_health_endpoint(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy"}
+    assert response.json()["status"] == "healthy"
+    assert response.json()["service"] == "hisabvani-api"
 
 
 def test_voice_query_missing_audio(client):

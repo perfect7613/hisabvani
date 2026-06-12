@@ -1,4 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HisabVani Frontend
+
+Next.js 16 frontend for the HisabVani multilingual household finance product.
+
+```bash
+npm install
+npm run dev
+```
+
+Set `NEXT_PUBLIC_API_URL` to the public FastAPI origin in production. When it is
+not set, `/api/*` requests use the local rewrite to
+`BACKEND_URL` (default `http://127.0.0.1:8000`).
 
 ## Getting Started
 

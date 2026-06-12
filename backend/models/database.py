@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from typing import List, Optional
 from datetime import datetime
@@ -16,8 +17,8 @@ class Transaction(BaseModel):
 
 
 class Database:
-    def __init__(self, db_path: str = "hisabvani.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or os.getenv("DATABASE_PATH", "hisabvani.db")
         self.init_db()
 
     def init_db(self):

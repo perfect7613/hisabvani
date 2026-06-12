@@ -29,7 +29,7 @@ graph TB
     end
 
     subgraph Backend["Backend (FastAPI)"]
-        API[REST API<br/>localhost:8000]
+        API[REST API<br/>Render web service]
         Routes[Routes: voice-expense,<br/>voice-query, upload-bill,<br/>calculate, generate-video]
     end
 
@@ -83,7 +83,9 @@ sequenceDiagram
     S-->>B: Catchy title
     B->>D: Create sandbox + render FFmpeg
     D-->>B: MP4 video bytes
-    B-->>F: Base64 video
+    B-->>F: Job ID immediately
+    F->>B: Poll short status requests
+    B-->>F: Stable MP4 URL when complete
     F-->>U: Play + download video
 ```
 
@@ -175,6 +177,62 @@ npm run dev
 ```
 
 Open http://localhost:3000 in your browser.
+
+## Deployment
+
+The production architecture deliberately keeps long-running AI work away from
+Vercel Functions:
+
+- **Vercel** hosts the Next.js frontend.
+- **Render** hosts the FastAPI API and its in-process video job worker.
+- **Daytona** performs the long HyperFrames render.
+- The frontend receives a job ID immediately and polls Render until the MP4 is
+  ready, so no Vercel request needs to remain open during rendering.
+
+### Deploy the backend to Render
+
+The root [`render.yaml`](./render.yaml) defines a free Python web service.
+
+```bash
+render login
+render workspace set
+render blueprints validate render.yaml
+```
+
+Create the service with the Render CLI or connect the repository as a Blueprint,
+then provide these secret environment variables:
+
+```text
+SARVAM_API_KEY
+DAYTONA_API_KEY
+HEYGEN_API_KEY
+```
+
+Render Free notes:
+
+- The service sleeps after 15 minutes without inbound traffic and can take
+  about a minute to wake.
+- The filesystem is ephemeral. SQLite entries, completed MP4 files, and
+  in-memory video job state can disappear after a restart, redeploy, or sleep.
+- The frontend keeps polling while a video renders, which supplies inbound
+  traffic and keeps the service awake for that active job.
+- Download a completed video promptly. Use paid persistent storage and a real
+  database for durable production data.
+
+### Deploy the frontend to Vercel
+
+Run these commands from `frontend/`:
+
+```bash
+vercel link
+vercel env add NEXT_PUBLIC_API_URL production
+vercel env add BACKEND_URL production
+vercel deploy --prod
+```
+
+Set both variables to the public Render origin, for example
+`https://hisabvani-api.onrender.com`. `NEXT_PUBLIC_API_URL` makes browser
+requests go directly to Render, bypassing Vercel Function duration limits.
 
 ## API Endpoints
 

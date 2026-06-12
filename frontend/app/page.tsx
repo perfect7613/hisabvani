@@ -1,217 +1,339 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { Mic, Upload, TrendingUp, Wallet, IndianRupee, Video } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { motion } from 'framer-motion';
+import {
+  ArrowUpRight,
+  FileScan,
+  Film,
+  IndianRupee,
+  Mic2,
+  PiggyBank,
+  Sparkles,
+  WalletCards,
+} from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { apiUrl } from '@/lib/api';
+import { ServiceNotice } from './components/service-notice';
 
-const COLORS = ['#D97706', '#F59E0B', '#065F46', '#10B981', '#78716C'];
+const COLORS = ['#b35d16', '#e6a32c', '#155e4b', '#739169', '#766c61'];
 
-const sampleData = {
-  totalExpenses: 51000,
-  totalIncome: 85000,
-  savings: 34000,
-  byCategory: [
-    { name: 'Education', value: 20000 },
-    { name: 'Medical', value: 8000 },
-    { name: 'EMI', value: 22000 },
-    { name: 'Rent', value: 25000 },
-    { name: 'Utilities', value: 2500 },
-  ],
-  monthlyTrend: [
-    { month: 'Jan', amount: 45000 },
-    { month: 'Feb', amount: 48000 },
-    { month: 'Mar', amount: 51000 },
-  ],
+const fallbackCategories = [
+  { name: 'Education', value: 20000 },
+  { name: 'Medical', value: 8000 },
+  { name: 'Rent', value: 18000 },
+  { name: 'Utilities', value: 5000 },
+];
+
+const monthlyTrend = [
+  { month: 'Apr', amount: 44000 },
+  { month: 'May', amount: 47500 },
+  { month: 'Jun', amount: 51000 },
+];
+
+type SampleData = {
+  total_expenses: number;
+  expenses_by_category: Record<string, number>;
+  count: number;
 };
+
+const actions = [
+  {
+    href: '/expense',
+    label: 'Voice khata',
+    kicker: 'Speak an expense',
+    copy: 'Say “petrol 500 ka” and let HisabVani write the entry.',
+    icon: WalletCards,
+    tone: 'bg-[#a95613] text-[#fff9ed]',
+  },
+  {
+    href: '/voice',
+    label: 'Ask HisabVani',
+    kicker: 'Understand your money',
+    copy: 'Ask a finance question naturally in your own language.',
+    icon: Mic2,
+    tone: 'bg-[#155e4b] text-[#fff9ed]',
+  },
+  {
+    href: '/upload',
+    label: 'Scan a bill',
+    kicker: 'Turn paper into data',
+    copy: 'Upload a receipt and extract the useful transaction details.',
+    icon: FileScan,
+    tone: 'bg-[#f2b33d] text-[#19140f]',
+  },
+  {
+    href: '/video',
+    label: 'Make a film',
+    kicker: 'Share the story',
+    copy: 'Render a multilingual expense film with licensed audio.',
+    icon: Film,
+    tone: 'bg-[#19140f] text-[#fff9ed]',
+  },
+];
 
 export default function Dashboard() {
   const [mode, setMode] = useState(0);
-  const [data, setData] = useState(sampleData);
+  const [sampleData, setSampleData] = useState<SampleData | null>(null);
+  const [backendState, setBackendState] = useState<'checking' | 'live' | 'sleeping'>('checking');
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadData() {
+      try {
+        const response = await fetch(apiUrl('/api/sample-data'), {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Backend unavailable');
+        setSampleData((await response.json()) as SampleData);
+        setBackendState('live');
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') setBackendState('sleeping');
+      }
+    }
+
+    void loadData();
+    return () => controller.abort();
+  }, []);
+
+  const categories = useMemo(() => {
+    if (!sampleData || Object.keys(sampleData.expenses_by_category).length === 0) {
+      return fallbackCategories;
+    }
+    return Object.entries(sampleData.expenses_by_category).map(([name, value]) => ({
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      value,
+    }));
+  }, [sampleData]);
+
+  const totalExpenses = sampleData?.total_expenses || 51000;
+  const income = 85000;
+  const savings = Math.max(income - totalExpenses, 0);
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-white/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <motion.h1 
-            initial={{ opacity: 0, y: -20 }}
+    <main className="overflow-hidden">
+      <section className="relative border-b border-ink/10">
+        <div className="ledger-grid absolute inset-0 opacity-55" />
+        <div className="absolute -right-24 top-10 size-80 rounded-full bg-saffron/20 blur-3xl" />
+        <div className="relative mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 lg:grid-cols-[1.15fr_0.85fr] lg:py-20">
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-3xl font-display font-bold text-primary"
+            className="max-w-3xl"
           >
-            HisabVani
-          </motion.h1>
-          
-          <nav className="flex gap-6">
-            <Link href="/" className="text-foreground hover:text-primary transition-colors font-medium">
-              Dashboard
-            </Link>
-            <Link href="/expense" className="text-foreground hover:text-primary transition-colors font-medium">
-              Voice Khata
-            </Link>
-            <Link href="/voice" className="text-foreground hover:text-primary transition-colors font-medium">
-              Voice Query
-            </Link>
-            <Link href="/upload" className="text-foreground hover:text-primary transition-colors font-medium">
-              Upload Bill
-            </Link>
-            <Link href="/video" className="text-foreground hover:text-primary transition-colors font-medium">
-              Video Reports
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-12">
-        {/* Mode Toggle */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="mb-8 bg-white rounded-2xl shadow-sm border border-border p-6"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-display font-semibold">Response Style</h2>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted">Detailed</span>
-              <input
-                type="range"
-                min="-1"
-                max="1"
-                step="0.1"
-                value={mode}
-                onChange={(e) => setMode(parseFloat(e.target.value))}
-                className="w-48 h-2 bg-border rounded-lg appearance-none cursor-pointer accent-primary"
-              />
-              <span className="text-sm text-muted">Simple</span>
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-copper/15 bg-cream/70 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-copper">
+              <Sparkles className="size-4" />
+              Multilingual family finance
             </div>
-          </div>
-          <p className="text-sm text-muted">
-            {mode > 0.5 ? '👨‍👩‍👧 Mom Mode: Simple, warm explanations' : 
-             mode < -0.5 ? '📊 Detailed Mode: Precise percentages and analysis' : 
-             '⚖️ Balanced Mode'}
-          </p>
-        </motion.div>
+            <h1 className="text-balance font-display text-5xl font-bold leading-[0.92] tracking-[-0.055em] sm:text-7xl">
+              Money feels lighter when the whole family understands it.
+            </h1>
+            <p className="mt-7 max-w-2xl text-lg leading-8 text-ink/62">
+              Speak an expense, scan a bill, ask a question, or turn one transaction into a film. HisabVani keeps the experience familiar, visual, and multilingual.
+            </p>
+          </motion.div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {[
-            { label: 'Total Income', value: data.totalIncome, icon: Wallet, color: 'text-secondary' },
-            { label: 'Total Expenses', value: data.totalExpenses, icon: TrendingUp, color: 'text-primary' },
-            { label: 'Savings', value: data.savings, icon: IndianRupee, color: 'text-secondary' },
-          ].map((card, i) => (
-            <motion.div
-              key={card.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 + i * 0.1 }}
-              className="bg-white rounded-2xl shadow-sm border border-border p-6 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <p className="text-sm text-muted mb-1">{card.label}</p>
-                  <p className="text-3xl font-display font-bold text-foreground">
-                    ₹{card.value.toLocaleString('en-IN')}
-                  </p>
-                </div>
-                <card.icon className={`w-8 h-8 ${card.color}`} />
+          <motion.aside
+            initial={{ opacity: 0, rotate: 2, y: 24 }}
+            animate={{ opacity: 1, rotate: -1.5, y: 0 }}
+            transition={{ delay: 0.08 }}
+            className="paper-card self-end rounded-[2rem] p-6 sm:p-8"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="eyebrow">June household note</p>
+                <p className="mt-3 font-display text-4xl font-bold tracking-[-0.04em]">
+                  ₹{totalExpenses.toLocaleString('en-IN')}
+                </p>
+                <p className="mt-1 text-sm text-muted">tracked expenses</p>
               </div>
+              <span
+                className={`mt-1 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-bold ${
+                  backendState === 'live'
+                    ? 'bg-leaf/10 text-leaf'
+                    : 'bg-saffron/15 text-copper'
+                }`}
+              >
+                <span className={`size-2 rounded-full ${backendState === 'live' ? 'bg-leaf' : 'bg-saffron'}`} />
+                {backendState === 'checking' ? 'Checking' : backendState === 'live' ? 'Service live' : 'Demo data'}
+              </span>
+            </div>
+            <div className="my-6 border-t border-dashed border-ink/15" />
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted">{sampleData?.count ?? 0} saved entries</span>
+              <span className="font-bold text-leaf">₹{savings.toLocaleString('en-IN')} available</span>
+            </div>
+          </motion.aside>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
+        {backendState === 'sleeping' && (
+          <div className="mb-7">
+            <ServiceNotice />
+          </div>
+        )}
+
+        <div className="grid gap-4 md:grid-cols-3">
+          {[
+            { label: 'Household income', value: income, icon: IndianRupee, note: 'Monthly working figure' },
+            { label: 'Expenses tracked', value: totalExpenses, icon: WalletCards, note: sampleData ? 'From your saved entries' : 'Illustrative dashboard data' },
+            { label: 'Room to save', value: savings, icon: PiggyBank, note: 'Income minus tracked spend' },
+          ].map((card, index) => (
+            <motion.article
+              key={card.label}
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 + index * 0.07 }}
+              className="paper-card rounded-[1.6rem] p-6"
+            >
+              <div className="mb-8 flex items-center justify-between">
+                <p className="text-sm font-bold text-ink/58">{card.label}</p>
+                <span className="grid size-10 place-items-center rounded-xl bg-ink/5 text-copper">
+                  <card.icon className="size-5" />
+                </span>
+              </div>
+              <p className="font-display text-4xl font-bold tracking-[-0.04em]">
+                ₹{card.value.toLocaleString('en-IN')}
+              </p>
+              <p className="mt-2 text-xs uppercase tracking-[0.14em] text-muted">{card.note}</p>
+            </motion.article>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+          <section className="paper-card rounded-[1.8rem] p-6 sm:p-8">
+            <div className="mb-5 flex items-end justify-between">
+              <div>
+                <p className="eyebrow">Where it went</p>
+                <h2 className="mt-2 text-2xl font-bold">Expense mix</h2>
+              </div>
+              <span className="text-xs font-bold uppercase tracking-[0.16em] text-muted">By category</span>
+            </div>
+            <ResponsiveContainer width="100%" height={285}>
+              <PieChart>
+                <Pie data={categories} dataKey="value" innerRadius={62} outerRadius={102} paddingAngle={3} stroke="none">
+                  {categories.map((entry, index) => (
+                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => `₹${Number(value).toLocaleString('en-IN')}`} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {categories.slice(0, 5).map((item, index) => (
+                <span key={item.name} className="flex items-center gap-2 text-xs font-semibold text-ink/60">
+                  <span className="size-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                  {item.name}
+                </span>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-[1.8rem] bg-ink p-6 text-cream shadow-[0_28px_80px_rgba(25,20,15,0.18)] sm:p-8">
+            <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">Conversation style</p>
+                <h2 className="mt-2 text-3xl font-bold">How should HisabVani explain?</h2>
+              </div>
+              <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/60">
+                {mode > 0.45 ? 'Simple' : mode < -0.45 ? 'Detailed' : 'Balanced'}
+              </span>
+            </div>
+            <input
+              aria-label="Response detail"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.1"
+              value={mode}
+              onChange={(event) => setMode(Number(event.target.value))}
+              className="w-full accent-saffron"
+            />
+            <div className="mt-3 flex justify-between text-xs font-bold uppercase tracking-[0.15em] text-white/42">
+              <span>More detail</span>
+              <span>More simple</span>
+            </div>
+            <p className="mt-8 max-w-xl font-display text-2xl leading-snug text-white/86">
+              {mode > 0.45
+                ? 'Warm, short explanations that are easy to share at home.'
+                : mode < -0.45
+                  ? 'Precise figures, percentages, and analytical context.'
+                  : 'Clear numbers with enough context to make a decision.'}
+            </p>
+          </section>
+        </div>
+
+        <div className="mt-14 mb-6 flex items-end justify-between gap-5">
+          <div>
+            <p className="eyebrow">Choose a starting point</p>
+            <h2 className="mt-2 text-4xl font-bold tracking-[-0.04em]">Four ways into your finances.</h2>
+          </div>
+          <p className="hidden max-w-sm text-right text-sm leading-6 text-muted md:block">
+            Each workflow is independent. Start with the information you already have.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {actions.map((action, index) => (
+            <motion.div
+              key={action.href}
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 + index * 0.06 }}
+            >
+              <Link
+                href={action.href}
+                className={`group flex min-h-56 flex-col justify-between overflow-hidden rounded-[1.8rem] p-7 shadow-[0_22px_60px_rgba(70,45,20,0.1)] transition-transform hover:-translate-y-1 ${action.tone}`}
+              >
+                <div className="flex items-start justify-between">
+                  <span className="grid size-12 place-items-center rounded-2xl border border-current/15 bg-white/10">
+                    <action.icon className="size-6" />
+                  </span>
+                  <ArrowUpRight className="size-6 transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-60">{action.kicker}</p>
+                  <h3 className="mt-2 text-3xl font-bold">{action.label}</h3>
+                  <p className="mt-3 max-w-md text-sm leading-6 opacity-72">{action.copy}</p>
+                </div>
+              </Link>
             </motion.div>
           ))}
         </div>
 
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Pie Chart */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.5 }}
-            className="bg-white rounded-2xl shadow-sm border border-border p-6"
-          >
-            <h3 className="text-xl font-display font-semibold mb-6">Expenses by Category</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={data.byCategory}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {data.byCategory.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </motion.div>
-
-          {/* Bar Chart */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.6 }}
-            className="bg-white rounded-2xl shadow-sm border border-border p-6"
-          >
-            <h3 className="text-xl font-display font-semibold mb-6">Monthly Trend</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={data.monthlyTrend}>
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="amount" fill="#D97706" radius={[8, 8, 0, 0]} />
+        <div className="mt-14">
+          <section className="paper-card rounded-[1.8rem] p-6 sm:p-8">
+            <div className="mb-5">
+              <p className="eyebrow">A calmer month</p>
+              <h2 className="mt-2 text-2xl font-bold">Expense rhythm</h2>
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={monthlyTrend}>
+                <CartesianGrid vertical={false} stroke="rgba(25,20,15,0.08)" />
+                <XAxis dataKey="month" axisLine={false} tickLine={false} />
+                <YAxis hide />
+                <Tooltip formatter={(value) => `₹${Number(value).toLocaleString('en-IN')}`} cursor={{ fill: 'rgba(242,179,61,0.1)' }} />
+                <Bar dataKey="amount" fill="#b35d16" radius={[10, 10, 2, 2]} />
               </BarChart>
             </ResponsiveContainer>
-          </motion.div>
+          </section>
         </div>
-
-        {/* Quick Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.7 }}
-          className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
-        >
-          <Link href="/expense" className="group">
-            <div className="bg-gradient-to-br from-amber-600 via-primary to-primary-light rounded-2xl p-8 text-white hover:shadow-lg transition-all hover:scale-[1.02] relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
-              <Mic className="w-12 h-12 mb-4 relative z-10" />
-              <h3 className="text-2xl font-display font-bold mb-2 relative z-10">Voice Khata</h3>
-              <p className="text-white/90 relative z-10">Bol ke kharcha likho — instant voice expense logging</p>
-            </div>
-          </Link>
-          
-          <Link href="/voice" className="group">
-            <div className="bg-gradient-to-br from-primary to-primary-light rounded-2xl p-8 text-white hover:shadow-lg transition-all hover:scale-[1.02]">
-              <Mic className="w-12 h-12 mb-4" />
-              <h3 className="text-2xl font-display font-bold mb-2">Ask a Question</h3>
-              <p className="text-white/90">Speak in Hinglish, Hindi, Kannada, or Tamil</p>
-            </div>
-          </Link>
-          
-          <Link href="/upload" className="group">
-            <div className="bg-gradient-to-br from-secondary to-emerald-600 rounded-2xl p-8 text-white hover:shadow-lg transition-all hover:scale-[1.02]">
-              <Upload className="w-12 h-12 mb-4" />
-              <h3 className="text-2xl font-display font-bold mb-2">Upload Bill</h3>
-              <p className="text-white/90">Extract data from receipts and statements</p>
-            </div>
-          </Link>
-
-          <Link href="/video" className="group">
-            <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-8 text-white hover:shadow-lg transition-all hover:scale-[1.02]">
-              <Video className="w-12 h-12 mb-4" />
-              <h3 className="text-2xl font-display font-bold mb-2">Video Reports</h3>
-              <p className="text-white/90">Generate shareable expense videos</p>
-            </div>
-          </Link>
-        </motion.div>
-      </main>
-    </div>
+      </section>
+    </main>
   );
 }

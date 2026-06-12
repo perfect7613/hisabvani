@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  ArrowLeft,
   Check,
   Download,
   Film,
@@ -15,9 +14,8 @@ import {
   Sparkles,
   Volume2,
 } from 'lucide-react';
-import Link from 'next/link';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+import { apiUrl, readApiError } from '@/lib/api';
+import { ServiceNotice } from '../components/service-notice';
 
 const VIDEO_LANGUAGES = [
   ['en-IN', 'English'],
@@ -118,7 +116,7 @@ export default function VideoReports() {
             language_code: languageCode,
           };
 
-      const response = await fetch(`${API_BASE}/api/generate-video`, {
+      const response = await fetch(apiUrl('/api/generate-video'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -128,10 +126,10 @@ export default function VideoReports() {
       };
 
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to generate video');
+        throw new Error(data.detail || await readApiError(response, 'Failed to generate video'));
       }
 
-      const statusUrl = new URL(data.status_url, API_BASE).toString();
+      const statusUrl = apiUrl(data.status_url);
       let result: VideoResult | undefined;
 
       for (let attempt = 0; attempt < 900; attempt += 1) {
@@ -159,7 +157,7 @@ export default function VideoReports() {
 
       setVideo({
         ...result,
-        streamUrl: new URL(result.video_url, API_BASE).toString(),
+        streamUrl: apiUrl(result.video_url),
       });
     } catch (requestError: unknown) {
       setError(errorMessage(requestError));
@@ -204,31 +202,26 @@ export default function VideoReports() {
 
   return (
     <div className="min-h-screen bg-[#f3eadb] text-[#17130f]">
-      <header className="sticky top-0 z-50 border-b border-[#17130f]/10 bg-[#f3eadb]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              aria-label="Back to dashboard"
-              className="grid size-11 place-items-center rounded-full border border-[#17130f]/15 transition-[transform,background-color] duration-150 active:scale-[0.97] hover:bg-white/70"
-            >
-              <ArrowLeft className="size-5" />
-            </Link>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#965307]">
-                HisabVani Studio
-              </p>
-              <h1 className="text-2xl font-bold sm:text-3xl">Expense films</h1>
+      <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
+        <div className="mb-9 grid gap-6 lg:grid-cols-[1fr_0.62fr] lg:items-end">
+          <div>
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#065f46]/20 bg-[#065f46]/8 px-4 py-2 text-sm font-semibold text-[#065f46]">
+              <Sparkles className="size-4" />
+              HyperFrames + HeyGen audio
             </div>
+            <h1 className="max-w-4xl text-5xl font-bold leading-[0.92] tracking-[-0.055em] sm:text-7xl">
+              Give one expense a beginning, middle, and end.
+            </h1>
           </div>
-          <div className="hidden items-center gap-2 rounded-full border border-[#065f46]/20 bg-[#065f46]/8 px-4 py-2 text-sm font-semibold text-[#065f46] sm:flex">
-            <Sparkles className="size-4" />
-            HyperFrames + HeyGen audio
+          <div>
+            <ServiceNotice compact />
+            <p className="mt-3 text-xs leading-5 text-[#766c61]">
+              Free Render storage is temporary. Download completed films before the service sleeps or redeploys.
+            </p>
           </div>
         </div>
-      </header>
 
-      <main className="mx-auto grid max-w-7xl gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[0.88fr_1.12fr] lg:py-12">
+        <div className="grid gap-8 lg:grid-cols-[0.88fr_1.12fr]">
         <motion.section
           initial={{ opacity: 0, transform: 'translateY(16px)' }}
           animate={{ opacity: 1, transform: 'translateY(0)' }}
@@ -482,6 +475,7 @@ export default function VideoReports() {
             </button>
           </div>
         </motion.section>
+        </div>
       </main>
     </div>
   );

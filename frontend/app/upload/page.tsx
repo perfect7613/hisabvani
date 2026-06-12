@@ -2,19 +2,34 @@
 
 import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { Upload, FileText, CheckCircle, ArrowLeft } from 'lucide-react';
-import Link from 'next/link';
+import { Upload, FileText, CheckCircle, ReceiptText, X } from 'lucide-react';
+import { apiUrl, readApiError } from '@/lib/api';
+import { ServiceNotice, WorkingState } from '../components/service-notice';
+
+type UploadResult = {
+  transaction: {
+    date: string;
+    amount: number;
+    category: string;
+    vendor: string;
+    description: string;
+  };
+  extracted_text?: string;
+};
 
 export default function BillUpload() {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<UploadResult | null>(null);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFile(e.target.files[0]);
+      setResult(null);
+      setError('');
     }
   };
 
@@ -23,6 +38,8 @@ export default function BillUpload() {
     setIsDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       setFile(e.dataTransfer.files[0]);
+      setResult(null);
+      setError('');
     }
   };
 
@@ -40,54 +57,68 @@ export default function BillUpload() {
     if (!file) return;
 
     setIsUploading(true);
+    setError('');
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const res = await fetch('http://localhost:8000/api/upload-bill', {
+      const res = await fetch(apiUrl('/api/upload-bill'), {
         method: 'POST',
         body: formData,
       });
 
+      if (!res.ok) {
+        throw new Error(await readApiError(res, 'The bill could not be read.'));
+      }
       const data = await res.json();
       setResult(data);
     } catch (err) {
       console.error('Error uploading file:', err);
+      setError(err instanceof Error ? err.message : 'The bill could not be read.');
     } finally {
       setIsUploading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-white/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-6">
-          <Link href="/" className="text-foreground hover:text-primary transition-colors">
-            <ArrowLeft className="w-6 h-6" />
-          </Link>
-          <h1 className="text-3xl font-display font-bold text-primary">Upload Bill</h1>
+    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-6xl px-5 py-10 sm:px-8 lg:py-16">
+      <div className="mb-9 grid gap-7 lg:grid-cols-[1fr_0.6fr] lg:items-end">
+        <div>
+          <p className="eyebrow">Bill scanner</p>
+          <h1 className="mt-3 max-w-3xl text-5xl font-bold leading-[0.94] tracking-[-0.05em] sm:text-6xl">
+            Turn a folded receipt into a clean expense entry.
+          </h1>
+          <p className="mt-5 max-w-2xl text-lg leading-8 text-ink/60">
+            Upload a photo or PDF. Sarvam Vision extracts the text, then HisabVani identifies the useful transaction details.
+          </p>
         </div>
-      </header>
+        <ServiceNotice compact />
+      </div>
 
-      <main className="max-w-4xl mx-auto px-6 py-12">
+      <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
         {/* Upload Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-sm border border-border p-8 mb-8"
+          className="paper-card rounded-[2rem] p-6 sm:p-8"
         >
-          <h2 className="text-2xl font-display font-semibold mb-6">Upload Your Bill or Receipt</h2>
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <p className="eyebrow">Add document</p>
+              <h2 className="mt-2 text-3xl font-semibold">Choose a receipt</h2>
+            </div>
+            <ReceiptText className="size-7 text-copper" />
+          </div>
 
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
+            className={`rounded-[1.6rem] border-2 border-dashed p-10 text-center cursor-pointer transition-all ${
               isDragActive
-                ? 'border-primary bg-accent/50'
-                : 'border-border hover:border-primary hover:bg-accent/20'
+                ? 'border-copper bg-saffron/15'
+                : 'border-ink/15 bg-white/35 hover:border-copper hover:bg-white/70'
             }`}
           >
             <input
@@ -97,13 +128,15 @@ export default function BillUpload() {
               accept="image/*,.pdf"
               className="hidden"
             />
-            <Upload className="w-16 h-16 mx-auto mb-4 text-muted" />
+            <span className="mx-auto mb-5 grid size-16 place-items-center rounded-2xl bg-ink text-saffron">
+              <Upload className="size-7" />
+            </span>
             {isDragActive ? (
               <p className="text-lg text-primary font-medium">Drop the file here...</p>
             ) : (
               <div>
-                <p className="text-lg text-foreground mb-2">
-                  Drag & drop your bill here, or click to select
+                <p className="text-lg font-bold text-foreground mb-2">
+                  Drop a bill here, or browse
                 </p>
                 <p className="text-sm text-muted">Supports images (PNG, JPG) and PDF files</p>
               </div>
@@ -114,7 +147,7 @@ export default function BillUpload() {
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="mt-6 flex items-center justify-between bg-accent/30 rounded-xl p-4"
+              className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-ink/10 bg-white/60 p-4"
             >
               <div className="flex items-center gap-3">
                 <FileText className="w-8 h-8 text-primary" />
@@ -126,65 +159,99 @@ export default function BillUpload() {
               <button
                 onClick={uploadFile}
                 disabled={isUploading}
-                className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary-light transition-colors disabled:opacity-50"
+                className="rounded-full bg-ink px-6 py-3 text-sm font-bold text-cream transition-transform active:scale-95 disabled:opacity-50"
               >
-                {isUploading ? 'Processing...' : 'Extract Data'}
+                {isUploading ? <WorkingState label="Reading bill" /> : 'Extract details'}
+              </button>
+              <button
+                aria-label="Remove selected file"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setFile(null);
+                  setResult(null);
+                  setError('');
+                }}
+                className="grid size-10 place-items-center rounded-full border border-ink/10 text-muted hover:text-ink"
+              >
+                <X className="size-4" />
               </button>
             </motion.div>
+          )}
+          {error && (
+            <p role="alert" className="mt-5 rounded-2xl border border-red-900/10 bg-red-50 p-4 text-sm font-semibold text-red-900">
+              {error}
+            </p>
           )}
         </motion.div>
 
         {/* Results */}
-        {result && (
+        <section className="rounded-[2rem] bg-ink p-6 text-cream shadow-[0_30px_80px_rgba(25,20,15,0.2)] sm:p-8">
+        {result ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl shadow-sm border border-border p-8"
+            className=""
           >
             <div className="flex items-center gap-3 mb-6">
-              <CheckCircle className="w-8 h-8 text-secondary" />
-              <h3 className="text-2xl font-display font-semibold">Extracted Data</h3>
+              <CheckCircle className="size-7 text-[#6ee7b7]" />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-saffron">Document understood</p>
+                <h3 className="mt-1 text-3xl font-semibold">Extracted entry</h3>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
                 <p className="text-sm text-muted mb-1">Date</p>
-                <p className="text-lg font-medium">{result.transaction.date}</p>
+                <p className="text-lg font-medium text-white/90">{result.transaction.date}</p>
               </div>
               <div>
                 <p className="text-sm text-muted mb-1">Amount</p>
-                <p className="text-2xl font-display font-bold text-primary">
+                <p className="text-3xl font-display font-bold text-saffron">
                   ₹{result.transaction.amount.toLocaleString('en-IN')}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-muted mb-1">Category</p>
-                <p className="text-lg font-medium capitalize">{result.transaction.category}</p>
+                <p className="text-lg font-medium capitalize text-white/90">{result.transaction.category}</p>
               </div>
               <div>
                 <p className="text-sm text-muted mb-1">Vendor</p>
-                <p className="text-lg font-medium">{result.transaction.vendor}</p>
+                <p className="text-lg font-medium text-white/90">{result.transaction.vendor}</p>
               </div>
             </div>
 
             <div>
               <p className="text-sm text-muted mb-2">Description</p>
-              <p className="text-foreground">{result.transaction.description}</p>
+              <p className="leading-7 text-white/78">{result.transaction.description}</p>
             </div>
 
             {result.extracted_text && (
               <details className="mt-6">
-                <summary className="cursor-pointer text-sm text-primary hover:text-primary-light">
+                <summary className="cursor-pointer text-sm font-bold text-saffron">
                   View Raw Extracted Text
                 </summary>
-                <pre className="mt-3 p-4 bg-border/30 rounded-lg text-sm overflow-x-auto">
+                <pre className="mt-3 overflow-x-auto rounded-xl border border-white/10 bg-white/[0.05] p-4 text-xs text-white/65">
                   {result.extracted_text}
                 </pre>
               </details>
             )}
           </motion.div>
+        ) : (
+          <div className="flex min-h-[430px] flex-col justify-between">
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">What you will get</p>
+            <div>
+              <p className="font-display text-4xl font-bold leading-[1.02] text-white/92">
+                Date, amount, category, vendor, and a readable description.
+              </p>
+              <p className="mt-5 max-w-lg text-sm leading-7 text-white/48">
+                The raw extraction stays available underneath, so you can check what the model saw.
+              </p>
+            </div>
+          </div>
         )}
-      </main>
-    </div>
+        </section>
+      </div>
+    </main>
   );
 }

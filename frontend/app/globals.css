@@ -1,14 +1,20 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: #FAFAF9;
-  --color-foreground: #1C1917;
-  --color-primary: #D97706;
-  --color-primary-light: #F59E0B;
-  --color-secondary: #065F46;
-  --color-accent: #FEF3C7;
-  --color-muted: #78716C;
-  --color-border: #E7E5E4;
+  --color-background: #f3eadb;
+  --color-foreground: #19140f;
+  --color-paper: #f3eadb;
+  --color-cream: #fff9ed;
+  --color-ink: #19140f;
+  --color-saffron: #f2b33d;
+  --color-copper: #a95613;
+  --color-leaf: #155e4b;
+  --color-primary: #b35d16;
+  --color-primary-light: #d47a20;
+  --color-secondary: #155e4b;
+  --color-accent: #f8dfaa;
+  --color-muted: #766c61;
+  --color-border: #d8cab8;
   
   --font-display: 'Fraunces', serif;
   --font-body: 'Work Sans', sans-serif;
@@ -28,12 +34,65 @@
   body {
     @apply bg-background text-foreground font-body;
     font-feature-settings: "cv11", "ss01";
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.14)),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.045'/%3E%3C/svg%3E");
+    min-height: 100vh;
   }
   
   h1, h2, h3, h4, h5, h6 {
     @apply font-display font-semibold tracking-tight;
   }
+}
+
+::selection {
+  background: #f2b33d;
+  color: #19140f;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ledger-grid {
+  background-image:
+    linear-gradient(to right, rgba(25, 20, 15, 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(25, 20, 15, 0.055) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.paper-card {
+  border: 1px solid rgba(25, 20, 15, 0.1);
+  background: rgba(255, 249, 237, 0.9);
+  box-shadow: 0 24px 70px rgba(72, 48, 24, 0.08);
+}
+
+.eyebrow {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #a95613;
+}
+
+.field {
+  width: 100%;
+  border: 1px solid rgba(25, 20, 15, 0.14);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 0.85rem 1rem;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.field:focus {
+  border-color: #b35d16;
+  background: white;
+  box-shadow: 0 0 0 4px rgba(179, 93, 22, 0.1);
 }
 
 @layer utilities {

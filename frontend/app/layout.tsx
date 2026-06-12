@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Work_Sans } from "next/font/google";
+import { ProductHeader } from "./components/product-header";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -15,8 +16,11 @@ const workSans = Work_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "HisabVani - Family Finance Agent",
-  description: "Voice + Vision Family Finance Agent for Indian Households",
+  title: {
+    default: "HisabVani",
+    template: "%s · HisabVani",
+  },
+  description: "A multilingual voice and vision finance companion for Indian households.",
 };
 
 export default function RootLayout({
@@ -26,7 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${fraunces.variable} ${workSans.variable}`}>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <ProductHeader />
+        {children}
+      </body>
     </html>
   );
 }
