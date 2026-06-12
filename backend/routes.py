@@ -1,8 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from backend.agents.speech_agent import SpeechAgent
 from backend.agents.llm_agent import LLMAgent
 import os
+import json
+from uuid import uuid4
 
 router = APIRouter(prefix="/api", tags=["voice"])
 
@@ -11,13 +13,19 @@ llm_agent = LLMAgent(api_key=os.getenv("SARVAM_API_KEY"))
 
 
 class VoiceQueryResponse(BaseModel):
+    record_id: str
     transcript: str
     response: str
     language_code: str
+    model: str
+    grounded_transaction_count: int
 
 
 @router.post("/voice-query", response_model=VoiceQueryResponse)
-async def voice_query(audio: UploadFile = File(...)):
+async def voice_query(
+    audio: UploadFile = File(...),
+    household_context: str = Form(default="{}"),
+):
     try:
         audio_bytes = await audio.read()
 
@@ -33,28 +41,65 @@ async def voice_query(audio: UploadFile = File(...)):
 
         if not transcript or not transcript.strip():
             return VoiceQueryResponse(
+                record_id=f"ask-{uuid4()}",
                 transcript="",
                 response="I couldn't understand the audio. Please speak clearly in Hindi, Hinglish, Kannada, Tamil, or English.",
-                language_code=language_code
+                language_code=language_code,
+                model="sarvam-105b",
+                grounded_transaction_count=0,
             )
+
+        try:
+            context = json.loads(household_context)
+        except json.JSONDecodeError:
+            context = {}
+        transactions = context.get("transactions", [])[:30]
+        conversations = context.get("conversations", [])[:8]
+        ledger_json = json.dumps(
+            {
+                "transactions": transactions,
+                "previous_conversations": conversations,
+            },
+            ensure_ascii=False,
+        )
 
         llm_response = llm_agent.chat(
             messages=[
-                {"role": "system", "content": "You are HisabVani, a helpful family finance assistant for Indian households. Respond in the same language as the user's query. Be warm, simple, and conversational."},
-                {"role": "user", "content": transcript}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are HisabVani, a careful financial reasoning assistant "
+                        "for Indian households. Answer in the same language and script "
+                        "as the user's question. Ground every numerical claim in the "
+                        "provided household ledger. Never invent income, budgets, dates, "
+                        "or expenses. If the ledger is insufficient, say exactly what is "
+                        "missing. Give a direct answer, brief evidence, and one practical "
+                        "next step. Do not give regulated investment or tax advice."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"HOUSEHOLD LEDGER:\n{ledger_json}\n\n"
+                        f"QUESTION:\n{transcript}"
+                    ),
+                },
             ],
-            model="sarvam-30b",
-            temperature=0.7,
-            max_tokens=1024,
-            reasoning_effort=None
+            model="sarvam-105b",
+            temperature=0.25,
+            max_tokens=1200,
+            reasoning_effort="high",
         )
 
         response_text = llm_response.choices[0].message.content
 
         return VoiceQueryResponse(
+            record_id=f"ask-{uuid4()}",
             transcript=transcript,
             response=response_text,
-            language_code=language_code
+            language_code=language_code,
+            model="sarvam-105b",
+            grounded_transaction_count=len(transactions),
         )
 
     except Exception as e:

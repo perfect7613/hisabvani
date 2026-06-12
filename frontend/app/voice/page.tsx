@@ -4,9 +4,16 @@ import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Mic, Square, Play, Share2, RotateCcw, MessageCircleMore } from 'lucide-react';
 import { apiUrl, readApiError } from '@/lib/api';
+import {
+  addLedgerConversation,
+  createLocalRecordId,
+  readHouseholdLedger,
+  useHouseholdLedger,
+} from '@/lib/household-ledger';
 import { ServiceNotice, WorkingState } from '../components/service-notice';
 
 export default function VoiceQuery() {
+  const ledger = useHouseholdLedger();
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [transcript, setTranscript] = useState('');
@@ -58,6 +65,21 @@ export default function VoiceQuery() {
     setError('');
     const formData = new FormData();
     formData.append('audio', audioBlob, 'recording.wav');
+    const currentLedger = readHouseholdLedger();
+    formData.append('household_context', JSON.stringify({
+      transactions: currentLedger.transactions.map((item) => ({
+        date: item.date,
+        amount: item.amount,
+        category: item.category,
+        vendor: item.vendor,
+        description: item.description,
+        source: item.source,
+      })),
+      conversations: currentLedger.conversations.slice(0, 8).map((item) => ({
+        question: item.question,
+        answer: item.answer,
+      })),
+    }));
 
     try {
       const res = await fetch(apiUrl('/api/voice-query'), {
@@ -71,6 +93,14 @@ export default function VoiceQuery() {
       const data = await res.json();
       setTranscript(data.transcript);
       setResponse(data.response);
+      addLedgerConversation({
+        id: data.record_id || createLocalRecordId('ask'),
+        question: data.transcript,
+        answer: data.response,
+        languageCode: data.language_code || 'unknown',
+        model: data.model || 'sarvam-105b',
+        createdAt: new Date().toISOString(),
+      });
     } catch (err) {
       console.error('Error submitting query:', err);
       setError(err instanceof Error ? err.message : 'Error processing your query. Please try again.');
@@ -94,8 +124,16 @@ export default function VoiceQuery() {
             Ask about money the way you speak at home.
           </h1>
           <p className="mt-5 max-w-2xl text-lg leading-8 text-ink/60">
-            Hindi, Hinglish, Kannada, Tamil, or English. HisabVani transcribes your question and answers in the same conversational spirit.
+            Hindi, Hinglish, Kannada, Tamil, or English. Saaras v3 transcribes your question, then Sarvam 105B reasons over the expenses saved on this device.
           </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span className="rounded-full bg-leaf/10 px-3 py-1.5 text-xs font-bold text-leaf">
+              {ledger.transactions.length} grounded expenses
+            </span>
+            <span className="rounded-full bg-copper/10 px-3 py-1.5 text-xs font-bold text-copper">
+              Sarvam 105B · high reasoning
+            </span>
+          </div>
         </div>
         <ServiceNotice compact />
       </div>
@@ -192,7 +230,7 @@ export default function VoiceQuery() {
                   “Is month humne sabse zyada kahan kharch kiya?”
                 </p>
                 <p className="mt-5 max-w-lg text-sm leading-7 text-white/48">
-                  Your transcript and answer stay together, making the result easy to verify and share.
+                  The answer uses only your locally saved ledger. The question and response are also saved for your next family report.
                 </p>
               </div>
             </div>
@@ -222,6 +260,9 @@ export default function VoiceQuery() {
                   </button>
                 </div>
                 <p className="text-lg leading-8">{response}</p>
+                <p className="mt-5 border-t border-ink/10 pt-4 text-xs font-bold uppercase tracking-[0.14em] text-leaf">
+                  Saved locally for the report film
+                </p>
               </div>
             )}
           </motion.div>

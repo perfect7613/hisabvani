@@ -129,3 +129,65 @@ class TranslationAgent:
             }
         )
         return translated
+
+    def translate_report_copy(
+        self,
+        *,
+        report_copy: dict,
+        transactions: list[dict],
+        target_language_code: str,
+    ) -> dict:
+        source_copy = {
+            **report_copy,
+            "brand_line": "HisabVani",
+            "report_kicker": "Household money report",
+            "ledger_heading": "What the family recorded",
+            "total_label": "Total recorded",
+            "advice_kicker": "What Sarvam 105B noticed",
+            "question_heading": "Questions the family asked",
+            "transaction_label": "transactions",
+            "conversation_label": "conversations",
+            "saved_conversations_label": "saved conversations",
+            "closing_kicker": "A clearer month starts here",
+            "closing_subtitle": "Voice, vision, and reasoning for Indian households",
+        }
+        translated = {
+            key: self.translate(value, target_language_code, "en-IN")
+            for key, value in source_copy.items()
+        }
+        translated_transactions = []
+        for transaction in transactions:
+            translated_transactions.append(
+                {
+                    **transaction,
+                    "category": self.translate(
+                        str(transaction.get("category") or "Other").title(),
+                        target_language_code,
+                        "en-IN",
+                    ),
+                    "description": self.translate(
+                        str(
+                            transaction.get("description")
+                            or transaction.get("vendor")
+                            or "Household expense"
+                        ),
+                        target_language_code,
+                        None,
+                    ),
+                }
+            )
+        translated.update(
+            {
+                "transactions": translated_transactions,
+                "language_code": target_language_code,
+                "language_name": SUPPORTED_VIDEO_LANGUAGES[target_language_code],
+                "font_family": VIDEO_FONT_BY_LANGUAGE.get(
+                    target_language_code,
+                    "Work Sans",
+                ),
+                "direction": (
+                    "rtl" if target_language_code in RTL_LANGUAGES else "ltr"
+                ),
+            }
+        )
+        return translated

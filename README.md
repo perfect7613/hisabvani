@@ -8,13 +8,17 @@ A multilingual family finance management system built for Indian households. Rec
 Record quick voice notes like *"Aaj chai pe 50 rupaye kharcha kiye"* and the system automatically extracts amount, category, and description.
 
 ### Voice Query
-Ask questions about your finances in natural language. Get responses in the same language you spoke.
+Ask questions about the expenses saved in the current browser. Sarvam 105B uses
+high reasoning effort, stays grounded in the supplied ledger, and answers in
+the same language you spoke.
 
 ### Bill Upload
 Upload receipts and bills. Sarvam Vision extracts transaction details automatically.
 
 ### Video Reports
-Generate shareable MP4 video reports of your expenses using HyperFrames + FFmpeg in Daytona sandboxes.
+Select multiple voice entries, scanned bills, and saved finance conversations.
+Sarvam 105B creates a grounded household briefing, Sarvam Translate localizes
+it, and HyperFrames renders a four-scene MP4 with HeyGen catalog audio.
 
 ### Calculator
 Execute Python code in isolated Daytona sandboxes for complex financial calculations.
@@ -34,15 +38,15 @@ graph TB
     end
 
     subgraph Agents["AI Agents"]
-        Speech[Speech Agent<br/>Sarvam Saarika v3]
+        Speech[Speech Agent<br/>Sarvam Saaras v3]
         LLM[LLM Agent<br/>Sarvam 30B & 105B]
         Vision[Vision Agent<br/>Sarvam Vision]
         Compute[Compute Agent<br/>Daytona Sandbox]
         Video[Video Agent<br/>FFmpeg + HyperFrames]
     end
 
-    subgraph Storage["Storage"]
-        DB[(SQLite<br/>hisabvani.db)]
+    subgraph Storage["Per-browser storage"]
+        Local[(Versioned localStorage<br/>transactions + conversations)]
     end
 
     UI --> API
@@ -52,7 +56,7 @@ graph TB
     Routes --> Vision
     Routes --> Compute
     Routes --> Video
-    Routes --> DB
+    UI --> Local
 ```
 
 ## User Flow
@@ -68,20 +72,21 @@ sequenceDiagram
     Note over U,D: Voice Expense Flow
     U->>F: Record voice note
     F->>B: POST /api/voice-expense
-    B->>S: Transcribe audio (Saarika v3)
+    B->>S: Transcribe audio (Saaras v3)
     S-->>B: Transcript
     B->>S: Extract expense data (Sarvam 30B)
     S-->>B: {amount, category, description}
-    B->>B: Save to SQLite
-    B-->>F: Transaction + confirmation
+    B-->>F: Structured transaction + confirmation
+    F->>F: Save record in localStorage
     F-->>U: Display expense card
 
     Note over U,D: Video Report Flow
-    U->>F: Click "Generate Video"
-    F->>B: POST /api/generate-video
-    B->>S: Generate title (Sarvam 105B)
-    S-->>B: Catchy title
-    B->>D: Create sandbox + render FFmpeg
+    U->>F: Select expenses and conversations
+    F->>B: POST /api/generate-video with selected records
+    B->>S: Reason over report evidence (Sarvam 105B)
+    S-->>B: Grounded headline, insight, and advice
+    B->>S: Translate dynamic report copy
+    B->>D: Create sandbox + render HyperFrames
     D-->>B: MP4 video bytes
     B-->>F: Job ID immediately
     F->>B: Poll short status requests
@@ -94,9 +99,9 @@ sequenceDiagram
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind v4, Framer Motion |
-| Backend | FastAPI, Python 3.13, SQLite |
-| Speech-to-Text | Sarvam Saarika v3 (Hindi, Hinglish, Kannada, Tamil, English) |
-| Text-to-Speech | Sarvam Bulbul v3 |
+| Backend | FastAPI, Python 3.13 |
+| Browser Storage | Versioned localStorage ledger |
+| Speech-to-Text | Sarvam Saaras v3 (Hindi, Hinglish, Kannada, Tamil, English) |
 | LLM | Sarvam 30B (fast), Sarvam 105B (reasoning) |
 | Vision | Sarvam Vision (document digitization) |
 | Code Execution | Daytona Sandbox (isolated Python) |
@@ -109,13 +114,11 @@ sequenceDiagram
 hisabvani/
 ├── backend/
 │   ├── agents/
-│   │   ├── speech_agent.py      # Sarvam STT/TTS
+│   │   ├── speech_agent.py      # Sarvam STT
 │   │   ├── llm_agent.py         # Sarvam 30B/105B
 │   │   ├── vision_agent.py      # Sarvam Vision
 │   │   ├── compute_agent.py     # Daytona sandbox
 │   │   └── video_agent.py       # FFmpeg video rendering
-│   ├── models/
-│   │   └── database.py          # SQLite models
 │   ├── routes.py                # Voice query endpoint
 │   ├── routes_bills.py          # Bill upload endpoint
 │   ├── routes_compute.py        # Calculator endpoint
@@ -123,6 +126,8 @@ hisabvani/
 │   ├── routes_video.py          # Video generation endpoint
 │   └── main.py                  # FastAPI app
 ├── frontend/
+│   ├── lib/
+│   │   └── household-ledger.ts  # Browser-local user ledger
 │   └── app/
 │       ├── page.tsx             # Dashboard
 │       ├── expense/page.tsx     # Voice Khata
@@ -212,12 +217,12 @@ Render Free notes:
 
 - The service sleeps after 15 minutes without inbound traffic and can take
   about a minute to wake.
-- The filesystem is ephemeral. SQLite entries, completed MP4 files, and
-  in-memory video job state can disappear after a restart, redeploy, or sleep.
+- The filesystem is ephemeral. Completed MP4 files and in-memory video job
+  state can disappear after a restart, redeploy, or sleep.
 - The frontend keeps polling while a video renders, which supplies inbound
   traffic and keeps the service awake for that active job.
-- Download a completed video promptly. Use paid persistent storage and a real
-  database for durable production data.
+- Download a completed video promptly. Household records remain in the user's
+  browser and are only sent when that user invokes an AI workflow.
 
 ### Deploy the frontend to Vercel
 
@@ -243,15 +248,15 @@ requests go directly to Render, bypassing Vercel Function duration limits.
 | POST | `/api/voice-query` | Ask a question via voice |
 | POST | `/api/upload-bill` | Upload bill/receipt image |
 | POST | `/api/calculate` | Execute Python code |
-| GET | `/api/sample-data` | Get all transactions |
-| POST | `/api/generate-video` | Generate expense video |
-| GET | `/api/download-video/{id}` | Download video for transaction |
+| POST | `/api/generate-video` | Queue a multi-transaction household report |
+| GET | `/api/video-jobs/{id}` | Poll report render status |
+| GET | `/api/videos/{id}` | Stream or download a completed MP4 |
 
 ## Testing
 
 ```bash
 # Run backend tests
-uv run pytest tests/ -v
+uv run pytest backend/tests/ -v
 
 # Build frontend
 cd frontend && npm run build
@@ -259,10 +264,10 @@ cd frontend && npm run build
 
 ## Sarvam AI Models Used
 
-- **Saarika v3** — Speech-to-text with code-mix support (Hindi + English)
-- **Bulbul v3** — Text-to-speech with 30+ Indian voices
-- **Sarvam 30B** — Fast LLM for expense extraction and chat
-- **Sarvam 105B** — Flagship MoE model for video title generation
+- **Saaras v3** — Speech-to-text with code-mix support
+- **Sarvam 30B** — Structured extraction from voice transcripts and Vision OCR
+- **Sarvam 105B** — Grounded ledger Q&A and multi-record report reasoning
+- **Sarvam Translate v1** — Report localization across supported Indic languages
 - **Sarvam Vision** — Document digitization for bill/receipt OCR
 
 ## License

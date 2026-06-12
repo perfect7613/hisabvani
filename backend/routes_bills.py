@@ -1,27 +1,24 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from typing import List
 from backend.agents.vision_agent import VisionAgent
-from backend.models.database import Database, Transaction
+from backend.agents.llm_agent import LLMAgent
+from backend.models.database import Transaction
 import os
 import re
+import json
 from datetime import datetime
+from uuid import uuid4
 
 router = APIRouter(prefix="/api", tags=["bills"])
 
 vision_agent = VisionAgent(api_key=os.getenv("SARVAM_API_KEY"))
-db = Database()
+llm_agent = LLMAgent(api_key=os.getenv("SARVAM_API_KEY"))
 
 
 class BillUploadResponse(BaseModel):
-    transaction_id: int
+    record_id: str
     extracted_text: str
     transaction: Transaction
-
-
-class TransactionListResponse(BaseModel):
-    transactions: List[Transaction]
-    total: float
 
 
 def parse_markdown_to_transaction(markdown_text: str) -> Transaction:
@@ -77,6 +74,41 @@ def parse_markdown_to_transaction(markdown_text: str) -> Transaction:
     )
 
 
+def extract_transaction_with_llm(markdown_text: str) -> Transaction:
+    response = llm_agent.chat(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Extract one household transaction from OCR text. Return only "
+                    "valid JSON with date, amount, category, vendor, and description. "
+                    "Use category food, transport, education, medical, entertainment, "
+                    "shopping, utilities, rent, emi, groceries, or other. Do not invent "
+                    "details that are not present."
+                ),
+            },
+            {"role": "user", "content": markdown_text[:12000]},
+        ],
+        model="sarvam-30b",
+        temperature=0.1,
+        max_tokens=350,
+    )
+    content = response.choices[0].message.content
+    start = content.find("{")
+    end = content.rfind("}") + 1
+    if start < 0 or end <= start:
+        raise ValueError("Sarvam 30B returned no JSON object")
+    data = json.loads(content[start:end])
+    return Transaction(
+        date=str(data.get("date") or datetime.now().strftime("%Y-%m-%d")),
+        amount=float(data.get("amount") or 0),
+        category=str(data.get("category") or "other").lower(),
+        vendor=str(data.get("vendor") or "Unknown")[:100],
+        description=str(data.get("description") or "")[:300],
+        source_document="uploaded",
+    )
+
+
 @router.post("/upload-bill", response_model=BillUploadResponse)
 async def upload_bill(file: UploadFile = File(...)):
     try:
@@ -89,12 +121,13 @@ async def upload_bill(file: UploadFile = File(...)):
             output_format="md"
         )
 
-        transaction = parse_markdown_to_transaction(extracted_text)
-        transaction_id = db.add_transaction(transaction)
-        transaction.id = transaction_id
+        try:
+            transaction = extract_transaction_with_llm(extracted_text)
+        except Exception:
+            transaction = parse_markdown_to_transaction(extracted_text)
 
         return BillUploadResponse(
-            transaction_id=transaction_id,
+            record_id=f"bill-{uuid4()}",
             extracted_text=extracted_text,
             transaction=transaction
         )
@@ -103,17 +136,4 @@ async def upload_bill(file: UploadFile = File(...)):
         import traceback
         print(f"Error in upload_bill: {e}")
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/transactions", response_model=TransactionListResponse)
-async def get_transactions(limit: int = 100):
-    try:
-        transactions = db.get_transactions(limit=limit)
-        total = db.get_total_expenses()
-        return TransactionListResponse(
-            transactions=transactions,
-            total=total
-        )
-    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

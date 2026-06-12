@@ -1,12 +1,14 @@
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
-from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
-import os
 from pathlib import Path
 from threading import Lock
+from typing import Optional
 from uuid import uuid4
+import json
+import os
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from backend.agents.llm_agent import LLMAgent
 from backend.agents.translation_agent import (
@@ -14,7 +16,7 @@ from backend.agents.translation_agent import (
     TranslationAgent,
 )
 from backend.agents.video_agent import VideoAgent
-from backend.models.database import Database
+
 
 router = APIRouter(prefix="/api", tags=["video"])
 
@@ -25,7 +27,6 @@ video_agent = VideoAgent(
     api_url=os.getenv("DAYTONA_API_URL", "https://app.daytona.io/api"),
     heygen_api_key=os.getenv("HEYGEN_API_KEY"),
 )
-db = Database()
 VIDEO_OUTPUT_DIR = Path(
     os.getenv(
         "VIDEO_OUTPUT_DIR",
@@ -40,12 +41,27 @@ VIDEO_JOBS: dict[str, dict] = {}
 VIDEO_JOBS_LOCK = Lock()
 
 
+class ReportTransaction(BaseModel):
+    id: Optional[str] = None
+    date: str
+    amount: float
+    category: str
+    vendor: str = ""
+    description: str = ""
+    source: str = "voice"
+
+
+class ReportConversation(BaseModel):
+    id: Optional[str] = None
+    question: str
+    answer: str
+    created_at: Optional[str] = None
+
+
 class VideoRequest(BaseModel):
-    transaction_id: Optional[int] = None
     title: Optional[str] = None
-    amount: Optional[float] = None
-    category: Optional[str] = None
-    description: Optional[str] = None
+    transactions: list[ReportTransaction] = Field(default_factory=list)
+    conversations: list[ReportConversation] = Field(default_factory=list)
     language_code: str = "en-IN"
 
 
@@ -53,10 +69,10 @@ class VideoResponse(BaseModel):
     video_id: str
     video_url: str
     title: str
-    amount: float
-    category: str
-    description: str
-    duration_seconds: float = 12
+    total_amount: float
+    transaction_count: int
+    conversation_count: int
+    duration_seconds: float = 18
     audio_provider: str
     music_name: Optional[str] = None
     sound_effect_name: Optional[str] = None
@@ -96,57 +112,105 @@ def video_path(video_id: str) -> Path:
     return path
 
 
-def render_video(request: VideoRequest) -> VideoResponse:
-    if request.transaction_id:
-        transactions = db.get_transactions(limit=100)
-        tx = next((t for t in transactions if t.id == request.transaction_id), None)
-        if not tx:
-            raise ValueError("Transaction not found")
-        amount = tx.amount
-        category = tx.category
-        description = tx.description
-    else:
-        amount = request.amount or 0
-        category = request.category or "other"
-        description = request.description or ""
+def parse_report_copy(content: str, fallback: dict) -> dict:
+    start = content.find("{")
+    end = content.rfind("}") + 1
+    if start < 0 or end <= start:
+        return fallback
+    try:
+        parsed = json.loads(content[start:end])
+    except json.JSONDecodeError:
+        return fallback
+    return {
+        key: str(parsed.get(key) or value).strip()
+        for key, value in fallback.items()
+    }
 
-    prompt = f"""Create a short, catchy title (max 5 words) for a video expense report:
-Amount: Rs.{amount}
-Category: {category}
-Description: {description}
 
-Return ONLY the title text, nothing else."""
-
-    llm_response = llm_agent.chat(
+def generate_report_copy(
+    transactions: list[ReportTransaction],
+    conversations: list[ReportConversation],
+    requested_title: Optional[str],
+) -> dict:
+    category_totals: dict[str, float] = {}
+    for transaction in transactions:
+        category_totals[transaction.category] = (
+            category_totals.get(transaction.category, 0) + transaction.amount
+        )
+    top_category = max(category_totals, key=category_totals.get)
+    total_amount = sum(item.amount for item in transactions)
+    fallback = {
+        "title": requested_title or "Our Household Money Story",
+        "headline": f"₹{total_amount:,.0f} across {len(transactions)} expenses",
+        "insight": f"{top_category.title()} was the largest spending category.",
+        "advice": "Review the largest category together before the next month begins.",
+        "conversation_summary": (
+            "The family asked for practical ways to understand and improve spending."
+            if conversations
+            else "No financial questions were included in this report."
+        ),
+    }
+    prompt_data = {
+        "transactions": [item.model_dump() for item in transactions],
+        "financial_conversations": [item.model_dump() for item in conversations],
+        "computed": {
+            "total_amount": total_amount,
+            "category_totals": category_totals,
+            "top_category": top_category,
+        },
+    }
+    response = llm_agent.chat(
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "You create catchy video titles for expense reports. "
-                    "Return ONLY the title."
+                    "You create concise, evidence-grounded household finance report "
+                    "copy. Use only the supplied transactions, computed totals, and "
+                    "conversation answers. Never invent income or savings. Return only "
+                    "a JSON object with title, headline, insight, advice, and "
+                    "conversation_summary. Keep title under 6 words and every other "
+                    "field under 22 words. Write in clear English so it can be translated."
                 ),
             },
-            {"role": "user", "content": prompt},
+            {
+                "role": "user",
+                "content": json.dumps(prompt_data, ensure_ascii=False),
+            },
         ],
         model="sarvam-105b",
-        temperature=0.7,
-        max_tokens=50,
+        temperature=0.2,
+        max_tokens=550,
+        reasoning_effort="high",
+    )
+    return parse_report_copy(
+        response.choices[0].message.content,
+        fallback,
     )
 
-    generated_title = (
-        llm_response.choices[0].message.content.strip().strip('"').strip("'")
+
+def render_video(request: VideoRequest) -> VideoResponse:
+    transactions = request.transactions[:8]
+    conversations = request.conversations[:4]
+    if not transactions:
+        raise ValueError("Select at least one saved transaction")
+
+    report_copy = generate_report_copy(
+        transactions,
+        conversations,
+        request.title,
     )
-    translated_copy = translation_agent.translate_video_copy(
-        title=generated_title,
-        category=category,
-        description=description,
-        date="Today",
+    translated_copy = translation_agent.translate_report_copy(
+        report_copy=report_copy,
+        transactions=[item.model_dump() for item in transactions[:5]],
         target_language_code=request.language_code,
     )
-    rendered = video_agent.render_expense_video(
+    total_amount = sum(item.amount for item in transactions)
+    rendered = video_agent.render_report_video(
         {
             **translated_copy,
-            "amount": amount,
+            "total_amount": total_amount,
+            "transaction_count": len(transactions),
+            "conversation_count": len(conversations),
         }
     )
     video_id = persist_video(rendered.content)
@@ -157,9 +221,9 @@ Return ONLY the title text, nothing else."""
         video_id=video_id,
         video_url=f"/api/videos/{video_id}",
         title=translated_copy["title"],
-        amount=amount,
-        category=translated_copy["category"],
-        description=translated_copy["description"],
+        total_amount=total_amount,
+        transaction_count=len(transactions),
+        conversation_count=len(conversations),
         audio_provider=rendered.audio_metadata.get("provider", "heygen"),
         music_name=music.get("name"),
         sound_effect_name=sound_effect.get("name"),
@@ -203,6 +267,11 @@ def run_video_job(job_id: str, request: VideoRequest):
 async def generate_video(request: VideoRequest):
     if request.language_code not in SUPPORTED_VIDEO_LANGUAGES:
         raise HTTPException(status_code=422, detail="Unsupported language")
+    if not request.transactions:
+        raise HTTPException(
+            status_code=422,
+            detail="Select at least one saved transaction",
+        )
 
     job_id = uuid4().hex
     with VIDEO_JOBS_LOCK:
@@ -246,36 +315,3 @@ async def get_video(video_id: str, download: bool = Query(default=False)):
             "Accept-Ranges": "bytes",
         },
     )
-
-
-@router.get("/download-video/{transaction_id}")
-async def download_video(transaction_id: int):
-    try:
-        transactions = db.get_transactions(limit=100)
-        tx = next((t for t in transactions if t.id == transaction_id), None)
-        if not tx:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-
-        expense_data = {
-            "title": "Expense Logged",
-            "amount": tx.amount,
-            "category": tx.category,
-            "description": tx.description,
-            "date": tx.date
-        }
-
-        rendered = video_agent.render_expense_video(expense_data)
-
-        return Response(
-            content=rendered.content,
-            media_type="video/mp4",
-            headers={"Content-Disposition": f"attachment; filename=expense_{transaction_id}.mp4"}
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        print(f"Error in download-video: {e}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))

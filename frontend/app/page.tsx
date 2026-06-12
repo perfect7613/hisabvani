@@ -5,11 +5,10 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   ArrowUpRight,
+  BrainCircuit,
   FileScan,
   Film,
-  IndianRupee,
   Mic2,
-  PiggyBank,
   Sparkles,
   WalletCards,
 } from 'lucide-react';
@@ -26,28 +25,10 @@ import {
   YAxis,
 } from 'recharts';
 import { apiUrl } from '@/lib/api';
+import { useHouseholdLedger } from '@/lib/household-ledger';
 import { ServiceNotice } from './components/service-notice';
 
 const COLORS = ['#b35d16', '#e6a32c', '#155e4b', '#739169', '#766c61'];
-
-const fallbackCategories = [
-  { name: 'Education', value: 20000 },
-  { name: 'Medical', value: 8000 },
-  { name: 'Rent', value: 18000 },
-  { name: 'Utilities', value: 5000 },
-];
-
-const monthlyTrend = [
-  { month: 'Apr', amount: 44000 },
-  { month: 'May', amount: 47500 },
-  { month: 'Jun', amount: 51000 },
-];
-
-type SampleData = {
-  total_expenses: number;
-  expenses_by_category: Record<string, number>;
-  count: number;
-};
 
 const actions = [
   {
@@ -78,51 +59,55 @@ const actions = [
     href: '/video',
     label: 'Make a film',
     kicker: 'Share the story',
-    copy: 'Render a multilingual expense film with licensed audio.',
+    copy: 'Render a multilingual household report with grounded advice and licensed audio.',
     icon: Film,
     tone: 'bg-[#19140f] text-[#fff9ed]',
   },
 ];
 
 export default function Dashboard() {
-  const [mode, setMode] = useState(0);
-  const [sampleData, setSampleData] = useState<SampleData | null>(null);
+  const ledger = useHouseholdLedger();
   const [backendState, setBackendState] = useState<'checking' | 'live' | 'sleeping'>('checking');
 
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadData() {
+    async function checkService() {
       try {
-        const response = await fetch(apiUrl('/api/sample-data'), {
+        const response = await fetch(apiUrl('/health'), {
           cache: 'no-store',
           signal: controller.signal,
         });
         if (!response.ok) throw new Error('Backend unavailable');
-        setSampleData((await response.json()) as SampleData);
         setBackendState('live');
       } catch (error) {
         if ((error as Error).name !== 'AbortError') setBackendState('sleeping');
       }
     }
 
-    void loadData();
+    void checkService();
     return () => controller.abort();
   }, []);
 
   const categories = useMemo(() => {
-    if (!sampleData || Object.keys(sampleData.expenses_by_category).length === 0) {
-      return fallbackCategories;
-    }
-    return Object.entries(sampleData.expenses_by_category).map(([name, value]) => ({
+    const totals = ledger.transactions.reduce<Record<string, number>>((result, item) => {
+      result[item.category] = (result[item.category] || 0) + item.amount;
+      return result;
+    }, {});
+    const entries = Object.entries(totals).map(([name, value]) => ({
       name: name.charAt(0).toUpperCase() + name.slice(1),
       value,
     }));
-  }, [sampleData]);
+    return entries.length > 0 ? entries : [{ name: 'No entries yet', value: 1 }];
+  }, [ledger.transactions]);
 
-  const totalExpenses = sampleData?.total_expenses || 51000;
-  const income = 85000;
-  const savings = Math.max(income - totalExpenses, 0);
+  const totalExpenses = ledger.transactions.reduce((sum, item) => sum + item.amount, 0);
+  const voiceCount = ledger.transactions.filter((item) => item.source === 'voice').length;
+  const billCount = ledger.transactions.filter((item) => item.source === 'bill').length;
+  const expenseRhythm = ledger.transactions.slice(0, 7).reverse().map((item) => ({
+    month: item.date.slice(5),
+    amount: item.amount,
+  }));
 
   return (
     <main className="overflow-hidden">
@@ -143,7 +128,7 @@ export default function Dashboard() {
               Money feels lighter when the whole family understands it.
             </h1>
             <p className="mt-7 max-w-2xl text-lg leading-8 text-ink/62">
-              Speak an expense, scan a bill, ask a question, or turn one transaction into a film. HisabVani keeps the experience familiar, visual, and multilingual.
+              Speak an expense, scan a bill, ask a grounded question, or turn the household ledger into a film. HisabVani keeps the experience familiar, visual, and multilingual.
             </p>
           </motion.div>
 
@@ -174,8 +159,8 @@ export default function Dashboard() {
             </div>
             <div className="my-6 border-t border-dashed border-ink/15" />
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted">{sampleData?.count ?? 0} saved entries</span>
-              <span className="font-bold text-leaf">₹{savings.toLocaleString('en-IN')} available</span>
+              <span className="text-muted">{ledger.transactions.length} saved entries</span>
+              <span className="font-bold text-leaf">{ledger.conversations.length} grounded conversations</span>
             </div>
           </motion.aside>
         </div>
@@ -190,9 +175,9 @@ export default function Dashboard() {
 
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            { label: 'Household income', value: income, icon: IndianRupee, note: 'Monthly working figure' },
-            { label: 'Expenses tracked', value: totalExpenses, icon: WalletCards, note: sampleData ? 'From your saved entries' : 'Illustrative dashboard data' },
-            { label: 'Room to save', value: savings, icon: PiggyBank, note: 'Income minus tracked spend' },
+            { label: 'Voice entries', value: voiceCount, icon: Mic2, note: 'Captured with Saaras v3' },
+            { label: 'Scanned bills', value: billCount, icon: FileScan, note: 'Read with Sarvam Vision + 30B' },
+            { label: 'Reasoned answers', value: ledger.conversations.length, icon: BrainCircuit, note: 'Grounded by Sarvam 105B' },
           ].map((card, index) => (
             <motion.article
               key={card.label}
@@ -208,7 +193,7 @@ export default function Dashboard() {
                 </span>
               </div>
               <p className="font-display text-4xl font-bold tracking-[-0.04em]">
-                ₹{card.value.toLocaleString('en-IN')}
+                {card.value.toLocaleString('en-IN')}
               </p>
               <p className="mt-2 text-xs uppercase tracking-[0.14em] text-muted">{card.note}</p>
             </motion.article>
@@ -247,33 +232,28 @@ export default function Dashboard() {
           <section className="rounded-[1.8rem] bg-ink p-6 text-cream shadow-[0_28px_80px_rgba(25,20,15,0.18)] sm:p-8">
             <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">Conversation style</p>
-                <h2 className="mt-2 text-3xl font-bold">How should HisabVani explain?</h2>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">Private family memory</p>
+                <h2 className="mt-2 text-3xl font-bold">One ledger, every workflow.</h2>
               </div>
               <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/60">
-                {mode > 0.45 ? 'Simple' : mode < -0.45 ? 'Detailed' : 'Balanced'}
+                Stored on this device
               </span>
             </div>
-            <input
-              aria-label="Response detail"
-              type="range"
-              min="-1"
-              max="1"
-              step="0.1"
-              value={mode}
-              onChange={(event) => setMode(Number(event.target.value))}
-              className="w-full accent-saffron"
-            />
-            <div className="mt-3 flex justify-between text-xs font-bold uppercase tracking-[0.15em] text-white/42">
-              <span>More detail</span>
-              <span>More simple</span>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                ['01', 'Speak or scan', 'Voice entries and bills become structured expenses.'],
+                ['02', 'Ask the ledger', '105B reasons only over records saved in this browser.'],
+                ['03', 'Make the film', 'Selected expenses and advice become one multilingual report.'],
+              ].map(([number, title, copy]) => (
+                <div key={number} className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+                  <span className="text-xs font-bold text-saffron">{number}</span>
+                  <strong className="mt-4 block text-lg">{title}</strong>
+                  <p className="mt-2 text-xs leading-5 text-white/48">{copy}</p>
+                </div>
+              ))}
             </div>
-            <p className="mt-8 max-w-xl font-display text-2xl leading-snug text-white/86">
-              {mode > 0.45
-                ? 'Warm, short explanations that are easy to share at home.'
-                : mode < -0.45
-                  ? 'Precise figures, percentages, and analytical context.'
-                  : 'Clear numbers with enough context to make a decision.'}
+            <p className="mt-7 max-w-xl font-display text-2xl leading-snug text-white/86">
+              Nothing is hidden behind a decorative preference slider. The records shown here are the same records Sarvam receives when you ask or render.
             </p>
           </section>
         </div>
@@ -323,7 +303,7 @@ export default function Dashboard() {
               <h2 className="mt-2 text-2xl font-bold">Expense rhythm</h2>
             </div>
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={monthlyTrend}>
+              <BarChart data={expenseRhythm.length > 0 ? expenseRhythm : [{ month: 'Start', amount: 0 }]}>
                 <CartesianGrid vertical={false} stroke="rgba(25,20,15,0.08)" />
                 <XAxis dataKey="month" axisLine={false} tickLine={false} />
                 <YAxis hide />

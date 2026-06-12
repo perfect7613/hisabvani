@@ -57,21 +57,11 @@ def test_upload_bill_with_real_image(client, sample_bill_image):
 
     assert response.status_code == 200
     data = response.json()
-    assert "transaction_id" in data
+    assert "record_id" in data
     assert "extracted_text" in data
     assert "transaction" in data
-    assert isinstance(data["transaction_id"], int)
+    assert isinstance(data["record_id"], str)
     assert isinstance(data["extracted_text"], str)
-
-
-def test_get_transactions_empty(client, temp_db):
-    response = client.get("/api/transactions")
-    assert response.status_code == 200
-    data = response.json()
-    assert "transactions" in data
-    assert "total" in data
-    assert isinstance(data["transactions"], list)
-    assert isinstance(data["total"], (int, float))
 
 
 def test_database_add_transaction(temp_db):

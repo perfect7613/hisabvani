@@ -4,9 +4,14 @@ import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Upload, FileText, CheckCircle, ReceiptText, X } from 'lucide-react';
 import { apiUrl, readApiError } from '@/lib/api';
+import {
+  addLedgerTransaction,
+  createLocalRecordId,
+} from '@/lib/household-ledger';
 import { ServiceNotice, WorkingState } from '../components/service-notice';
 
 type UploadResult = {
+  record_id?: string;
   transaction: {
     date: string;
     amount: number;
@@ -72,6 +77,17 @@ export default function BillUpload() {
       }
       const data = await res.json();
       setResult(data);
+      addLedgerTransaction({
+        id: data.record_id || createLocalRecordId('bill'),
+        date: data.transaction.date,
+        amount: Number(data.transaction.amount),
+        category: data.transaction.category,
+        vendor: data.transaction.vendor,
+        description: data.transaction.description,
+        source: 'bill',
+        extractedText: data.extracted_text,
+        createdAt: new Date().toISOString(),
+      });
     } catch (err) {
       console.error('Error uploading file:', err);
       setError(err instanceof Error ? err.message : 'The bill could not be read.');
@@ -225,6 +241,10 @@ export default function BillUpload() {
               <p className="text-sm text-muted mb-2">Description</p>
               <p className="leading-7 text-white/78">{result.transaction.description}</p>
             </div>
+
+            <p className="mt-6 rounded-xl border border-[#6ee7b7]/20 bg-[#6ee7b7]/10 px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] text-[#9ff4ce]">
+              Saved to this device · {(result.record_id || 'local record').slice(-8)}
+            </p>
 
             {result.extracted_text && (
               <details className="mt-6">

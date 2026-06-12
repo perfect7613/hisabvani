@@ -1,27 +1,24 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 import os
 import json
-from datetime import datetime
+from uuid import uuid4
 
 from backend.agents.speech_agent import SpeechAgent
 from backend.agents.llm_agent import LLMAgent
-from backend.models.database import Database, Transaction
 
 router = APIRouter(prefix="/api", tags=["voice-expense"])
 
 speech_agent = SpeechAgent(api_key=os.getenv("SARVAM_API_KEY"))
 llm_agent = LLMAgent(api_key=os.getenv("SARVAM_API_KEY"))
-db = Database()
 
 
 class VoiceExpenseResponse(BaseModel):
+    record_id: str
     transcript: str
     amount: float
     category: str
     description: str
-    transaction_id: int
     confirmation: str
 
 
@@ -91,24 +88,14 @@ Return ONLY the JSON, no other text."""
                 detail=f"Failed to extract expense details: {str(e)}"
             )
 
-        transaction = Transaction(
-            date=datetime.now().strftime("%Y-%m-%d"),
-            amount=amount,
-            category=category,
-            vendor="",
-            description=description,
-            source_document="voice"
-        )
-        transaction_id = db.add_transaction(transaction)
-
         confirmation = f"Haan ji, {amount} rupaye {category} ke liye note kar liye. {description}."
 
         return VoiceExpenseResponse(
+            record_id=f"voice-{uuid4()}",
             transcript=transcript,
             amount=amount,
             category=category,
             description=description,
-            transaction_id=transaction_id,
             confirmation=confirmation
         )
 

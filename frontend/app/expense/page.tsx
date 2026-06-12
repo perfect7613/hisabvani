@@ -4,6 +4,10 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Square, RotateCcw, BookOpen } from 'lucide-react';
 import { apiUrl, readApiError } from '@/lib/api';
+import {
+  addLedgerTransaction,
+  createLocalRecordId,
+} from '@/lib/household-ledger';
 import { ServiceNotice } from '../components/service-notice';
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -50,6 +54,7 @@ export default function VoiceExpense() {
   const [isLoading, setIsLoading] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [error, setError] = useState('');
+  const [savedRecordId, setSavedRecordId] = useState('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -115,6 +120,19 @@ export default function VoiceExpense() {
       setCategory(data.category);
       setDescription(data.description);
       setConfirmation(data.confirmation);
+      const recordId = data.record_id || createLocalRecordId('voice');
+      addLedgerTransaction({
+        id: recordId,
+        date: new Date().toISOString().slice(0, 10),
+        amount: Number(data.amount),
+        category: data.category,
+        vendor: '',
+        description: data.description,
+        source: 'voice',
+        transcript: data.transcript,
+        createdAt: new Date().toISOString(),
+      });
+      setSavedRecordId(recordId);
     } catch (err) {
       console.error('Error:', err);
       setError(err instanceof Error ? err.message : 'Error processing your expense. Please try again.');
@@ -132,6 +150,7 @@ export default function VoiceExpense() {
     setConfirmation('');
     setRecordingTime(0);
     setError('');
+    setSavedRecordId('');
   };
 
   const formatTime = (s: number) =>
@@ -416,6 +435,11 @@ export default function VoiceExpense() {
                       &ldquo;{transcript}&rdquo;
                     </p>
                   </motion.div>
+                  {savedRecordId && (
+                    <p className="mt-6 rounded-xl bg-leaf/10 px-4 py-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-leaf">
+                      Saved on this device · {savedRecordId.slice(-8)}
+                    </p>
+                  )}
                 </div>
 
                 {/* Confirmation footer */}

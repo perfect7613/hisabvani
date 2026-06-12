@@ -1,20 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   Check,
+  Clapperboard,
   Download,
+  FileScan,
   Film,
   Languages,
   LoaderCircle,
+  MessageCircleMore,
+  Mic2,
   Music2,
   Play,
+  ReceiptText,
   Share2,
   Sparkles,
   Volume2,
 } from 'lucide-react';
 import { apiUrl, readApiError } from '@/lib/api';
+import {
+  seedDemoHouseholdLedger,
+  useHouseholdLedger,
+} from '@/lib/household-ledger';
 import { ServiceNotice } from '../components/service-notice';
 
 const VIDEO_LANGUAGES = [
@@ -47,9 +57,9 @@ type VideoResult = {
   video_id: string;
   video_url: string;
   title: string;
-  amount: number;
-  category: string;
-  description: string;
+  total_amount: number;
+  transaction_count: number;
+  conversation_count: number;
   duration_seconds: number;
   audio_provider: string;
   music_name?: string;
@@ -58,16 +68,8 @@ type VideoResult = {
   language_name: string;
 };
 
-type ReadyVideo = VideoResult & {
-  streamUrl: string;
-};
-
-type VideoJobCreated = {
-  job_id: string;
-  status: string;
-  status_url: string;
-};
-
+type ReadyVideo = VideoResult & { streamUrl: string };
+type VideoJobCreated = { job_id: string; status: string; status_url: string };
 type VideoJobStatus = {
   job_id: string;
   status: 'queued' | 'rendering' | 'completed' | 'failed';
@@ -75,20 +77,21 @@ type VideoJobStatus = {
   error?: string;
 };
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong while generating the video.';
-}
-
 function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong while generating the report.';
+}
+
 export default function VideoReports() {
-  const [transactionId, setTransactionId] = useState('');
+  const ledger = useHouseholdLedger();
+  const initializedTransactions = useRef(false);
+  const initializedConversations = useRef(false);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<string[]>([]);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
-  const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('');
-  const [description, setDescription] = useState('');
   const [languageCode, setLanguageCode] = useState('en-IN');
   const [video, setVideo] = useState<ReadyVideo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -96,70 +99,91 @@ export default function VideoReports() {
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!initializedTransactions.current && ledger.transactions.length > 0) {
+      setSelectedTransactionIds(ledger.transactions.map((item) => item.id));
+      initializedTransactions.current = true;
+    }
+  }, [ledger.transactions]);
+
+  useEffect(() => {
+    if (!initializedConversations.current && ledger.conversations.length > 0) {
+      setSelectedConversationIds(ledger.conversations.map((item) => item.id));
+      initializedConversations.current = true;
+    }
+  }, [ledger.conversations]);
+
+  const selectedTransactions = useMemo(
+    () => ledger.transactions.filter((item) => selectedTransactionIds.includes(item.id)),
+    [ledger.transactions, selectedTransactionIds],
+  );
+  const selectedConversations = useMemo(
+    () => ledger.conversations.filter((item) => selectedConversationIds.includes(item.id)),
+    [ledger.conversations, selectedConversationIds],
+  );
+  const selectedTotal = selectedTransactions.reduce((sum, item) => sum + item.amount, 0);
+
+  const toggleSelection = (
+    id: string,
+    selected: string[],
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+  ) => {
+    setter(selected.includes(id)
+      ? selected.filter((item) => item !== id)
+      : [...selected, id]);
+  };
+
   const generateVideo = async () => {
+    if (selectedTransactions.length === 0) return;
     setIsLoading(true);
     setIsPlayerReady(false);
     setError('');
     setVideo(null);
 
     try {
-      const payload = transactionId
-        ? {
-            transaction_id: Number.parseInt(transactionId, 10),
-            language_code: languageCode,
-          }
-        : {
-            title: title || 'Expense Report',
-            amount: Number.parseFloat(amount) || 0,
-            category: category || 'other',
-            description: description || '',
-            language_code: languageCode,
-          };
-
       const response = await fetch(apiUrl('/api/generate-video'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          title: title || undefined,
+          language_code: languageCode,
+          transactions: selectedTransactions.map((item) => ({
+            id: item.id,
+            date: item.date,
+            amount: item.amount,
+            category: item.category,
+            vendor: item.vendor,
+            description: item.description,
+            source: item.source,
+          })),
+          conversations: selectedConversations.map((item) => ({
+            id: item.id,
+            question: item.question,
+            answer: item.answer,
+            created_at: item.createdAt,
+          })),
+        }),
       });
-      const data = (await response.json()) as VideoJobCreated & {
-        detail?: string;
-      };
-
+      const created = (await response.json()) as VideoJobCreated & { detail?: string };
       if (!response.ok) {
-        throw new Error(data.detail || await readApiError(response, 'Failed to generate video'));
+        throw new Error(created.detail || await readApiError(response, 'Failed to generate report'));
       }
 
-      const statusUrl = apiUrl(data.status_url);
       let result: VideoResult | undefined;
-
       for (let attempt = 0; attempt < 900; attempt += 1) {
         await wait(attempt === 0 ? 500 : 2_000);
-        const statusResponse = await fetch(statusUrl, { cache: 'no-store' });
-        const job = (await statusResponse.json()) as VideoJobStatus & {
-          detail?: string;
-        };
-
-        if (!statusResponse.ok) {
-          throw new Error(job.detail || 'Could not check the video render status.');
-        }
-        if (job.status === 'failed') {
-          throw new Error(job.error || 'Video rendering failed.');
-        }
+        const statusResponse = await fetch(apiUrl(created.status_url), { cache: 'no-store' });
+        const job = (await statusResponse.json()) as VideoJobStatus & { detail?: string };
+        if (!statusResponse.ok) throw new Error(job.detail || 'Could not check render status.');
+        if (job.status === 'failed') throw new Error(job.error || 'Video rendering failed.');
         if (job.status === 'completed' && job.result) {
           result = job.result;
           break;
         }
       }
-
-      if (!result) {
-        throw new Error('Video rendering timed out after 30 minutes.');
-      }
-
-      setVideo({
-        ...result,
-        streamUrl: apiUrl(result.video_url),
-      });
-    } catch (requestError: unknown) {
+      if (!result) throw new Error('Video rendering timed out after 30 minutes.');
+      setVideo({ ...result, streamUrl: apiUrl(result.video_url) });
+    } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
       setIsLoading(false);
@@ -167,33 +191,28 @@ export default function VideoReports() {
   };
 
   const downloadVideo = () => {
-    if (!video) return;
-    window.location.assign(`${video.streamUrl}?download=true`);
+    if (video) window.location.assign(`${video.streamUrl}?download=true`);
   };
 
   const shareVideo = async () => {
     if (!video) return;
     setIsSharing(true);
     setError('');
-
     try {
       const response = await fetch(video.streamUrl);
       if (!response.ok) throw new Error('Could not prepare the video for sharing.');
       const blob = await response.blob();
-      const file = new File([blob], `hisabvani-${video.video_id}.mp4`, {
-        type: 'video/mp4',
-      });
-
+      const file = new File([blob], `hisabvani-${video.video_id}.mp4`, { type: 'video/mp4' });
       if (navigator.share && navigator.canShare?.({ files: [file] })) {
         await navigator.share({
           title: video.title,
-          text: `HisabVani expense report for ₹${video.amount.toLocaleString('en-IN')}`,
+          text: `HisabVani household report for ₹${video.total_amount.toLocaleString('en-IN')}`,
           files: [file],
         });
       } else {
         downloadVideo();
       }
-    } catch (shareError: unknown) {
+    } catch (shareError) {
       setError(errorMessage(shareError));
     } finally {
       setIsSharing(false);
@@ -201,194 +220,232 @@ export default function VideoReports() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3eadb] text-[#17130f]">
-      <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
-        <div className="mb-9 grid gap-6 lg:grid-cols-[1fr_0.62fr] lg:items-end">
-          <div>
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#065f46]/20 bg-[#065f46]/8 px-4 py-2 text-sm font-semibold text-[#065f46]">
-              <Sparkles className="size-4" />
-              HyperFrames + HeyGen audio
-            </div>
-            <h1 className="max-w-4xl text-5xl font-bold leading-[0.92] tracking-[-0.055em] sm:text-7xl">
-              Give one expense a beginning, middle, and end.
-            </h1>
+    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
+      <div className="mb-10 grid gap-7 lg:grid-cols-[1fr_0.62fr] lg:items-end">
+        <div>
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-leaf/20 bg-leaf/8 px-4 py-2 text-sm font-bold text-leaf">
+            <Sparkles className="size-4" />
+            Sarvam 105B + HyperFrames + HeyGen audio
           </div>
-          <div>
-            <ServiceNotice compact />
-            <p className="mt-3 text-xs leading-5 text-[#766c61]">
-              Free Render storage is temporary. Download completed films before the service sleeps or redeploys.
-            </p>
-          </div>
+          <h1 className="max-w-5xl text-5xl font-bold leading-[0.92] tracking-[-0.055em] sm:text-7xl">
+            Turn the month into one family money story.
+          </h1>
+          <p className="mt-6 max-w-3xl text-lg leading-8 text-ink/60">
+            Choose locally saved voice entries, scanned bills, and financial conversations. Sarvam 105B reasons over the selection, then HyperFrames renders an 18-second multilingual report.
+          </p>
         </div>
+        <div>
+          <ServiceNotice compact />
+          <p className="mt-3 text-xs leading-5 text-muted">
+            Your ledger stays in this browser. Only the selected report data is sent for generation.
+          </p>
+        </div>
+      </div>
 
-        <div className="grid gap-8 lg:grid-cols-[0.88fr_1.12fr]">
+      <div className="grid gap-7 xl:grid-cols-[0.9fr_1.1fr]">
         <motion.section
-          initial={{ opacity: 0, transform: 'translateY(16px)' }}
-          animate={{ opacity: 1, transform: 'translateY(0)' }}
-          transition={{ duration: 0.42, ease: [0.23, 1, 0.32, 1] }}
-          className="rounded-[2rem] border border-[#17130f]/10 bg-[#fffaf0] p-6 shadow-[0_24px_80px_rgba(83,57,27,0.09)] sm:p-8"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="paper-card rounded-[2rem] p-6 sm:p-8"
         >
-          <div className="mb-8 flex items-start justify-between gap-5">
+          <div className="mb-7 flex items-start justify-between gap-5">
             <div>
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-[#d97706]">
-                Build your story
-              </p>
-              <h2 className="max-w-md text-4xl font-bold leading-[0.98] tracking-[-0.04em] sm:text-5xl">
-                Turn one expense into a film.
-              </h2>
+              <p className="eyebrow">Report ingredients</p>
+              <h2 className="mt-2 text-4xl font-bold">Choose what the film remembers.</h2>
             </div>
-            <div className="grid size-14 shrink-0 place-items-center rounded-2xl bg-[#17130f] text-[#f4b942]">
-              <Film className="size-7" />
-            </div>
+            <span className="grid size-14 shrink-0 place-items-center rounded-2xl bg-ink text-saffron">
+              <Clapperboard className="size-7" />
+            </span>
           </div>
 
-          <div className="space-y-5">
+          {ledger.transactions.length === 0 ? (
+            <div className="rounded-[1.6rem] border border-dashed border-ink/15 bg-white/45 p-7">
+              <p className="text-2xl font-bold">Your local ledger is empty.</p>
+              <p className="mt-2 text-sm leading-6 text-muted">Add at least one expense before creating a report.</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <Link href="/expense" className="flex items-center gap-3 rounded-xl bg-ink px-4 py-3 font-bold text-cream">
+                  <Mic2 className="size-5 text-saffron" /> Record an expense
+                </Link>
+                <Link href="/upload" className="flex items-center gap-3 rounded-xl border border-ink/12 bg-white px-4 py-3 font-bold">
+                  <FileScan className="size-5 text-copper" /> Scan a bill
+                </Link>
+              </div>
+              <button
+                onClick={seedDemoHouseholdLedger}
+                className="mt-3 w-full rounded-xl border border-copper/20 bg-saffron/15 px-4 py-3 text-sm font-bold text-copper"
+              >
+                Load a local demo household
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm font-bold">Transactions</p>
+                <button
+                  onClick={() => setSelectedTransactionIds(
+                    selectedTransactionIds.length === ledger.transactions.length
+                      ? []
+                      : ledger.transactions.map((item) => item.id),
+                  )}
+                  className="text-xs font-bold text-copper"
+                >
+                  {selectedTransactionIds.length === ledger.transactions.length ? 'Clear all' : 'Select all'}
+                </button>
+              </div>
+              <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                {ledger.transactions.map((transaction) => {
+                  const checked = selectedTransactionIds.includes(transaction.id);
+                  return (
+                    <label
+                      key={transaction.id}
+                      className={`flex cursor-pointer items-center gap-4 rounded-xl border p-4 transition-colors ${
+                        checked ? 'border-copper/35 bg-saffron/12' : 'border-ink/10 bg-white/50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSelection(
+                          transaction.id,
+                          selectedTransactionIds,
+                          setSelectedTransactionIds,
+                        )}
+                        className="size-4 accent-copper"
+                      />
+                      <span className={`grid size-10 shrink-0 place-items-center rounded-xl ${
+                        transaction.source === 'bill' ? 'bg-leaf/10 text-leaf' : 'bg-copper/10 text-copper'
+                      }`}>
+                        {transaction.source === 'bill' ? <ReceiptText className="size-5" /> : <Mic2 className="size-5" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm">{transaction.description || transaction.vendor}</strong>
+                        <span className="text-xs capitalize text-muted">{transaction.category} · {transaction.date}</span>
+                      </span>
+                      <strong className="font-display text-lg">₹{transaction.amount.toLocaleString('en-IN')}</strong>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <div className="my-7 border-t border-dashed border-ink/15" />
+
+          <div className="mb-4 flex items-center justify-between">
             <div>
-              <label htmlFor="transaction-id" className="mb-2 block text-sm font-semibold">
-                Use a saved transaction
-              </label>
+              <p className="text-sm font-bold">Finance conversations</p>
+              <p className="mt-1 text-xs text-muted">Included as summarized advice scenes.</p>
+            </div>
+            {ledger.conversations.length > 0 && (
+              <button
+                onClick={() => setSelectedConversationIds(
+                  selectedConversationIds.length === ledger.conversations.length
+                    ? []
+                    : ledger.conversations.map((item) => item.id),
+                )}
+                className="text-xs font-bold text-copper"
+              >
+                {selectedConversationIds.length === ledger.conversations.length ? 'Clear all' : 'Select all'}
+              </button>
+            )}
+          </div>
+
+          {ledger.conversations.length === 0 ? (
+            <Link href="/voice" className="flex items-center justify-between rounded-xl border border-dashed border-ink/15 bg-white/40 p-4">
+              <span className="flex items-center gap-3 text-sm font-bold">
+                <MessageCircleMore className="size-5 text-copper" /> Ask a grounded finance question
+              </span>
+              <span className="text-xs text-muted">Optional</span>
+            </Link>
+          ) : (
+            <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+              {ledger.conversations.map((conversation) => {
+                const checked = selectedConversationIds.includes(conversation.id);
+                return (
+                  <label key={conversation.id} className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${
+                    checked ? 'border-leaf/30 bg-leaf/8' : 'border-ink/10 bg-white/50'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSelection(
+                        conversation.id,
+                        selectedConversationIds,
+                        setSelectedConversationIds,
+                      )}
+                      className="mt-1 size-4 accent-leaf"
+                    />
+                    <span className="min-w-0">
+                      <strong className="block truncate text-sm">{conversation.question}</strong>
+                      <span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{conversation.answer}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-7 grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="report-title" className="mb-2 block text-sm font-bold">Optional title</label>
               <input
-                id="transaction-id"
-                type="number"
-                value={transactionId}
-                onChange={(event) => setTransactionId(event.target.value)}
-                placeholder="Transaction ID"
-                className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10"
+                id="report-title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Let Sarvam name it"
+                maxLength={60}
+                className="field"
               />
             </div>
-
-            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.18em] text-[#8a7f73]">
-              <span className="h-px flex-1 bg-[#17130f]/10" />
-              or enter it manually
-              <span className="h-px flex-1 bg-[#17130f]/10" />
-            </div>
-
             <div>
-              <label htmlFor="video-language" className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                <Languages className="size-4 text-[#965307]" />
-                Video language
+              <label htmlFor="video-language" className="mb-2 flex items-center gap-2 text-sm font-bold">
+                <Languages className="size-4 text-copper" /> Video language
               </label>
               <select
                 id="video-language"
                 value={languageCode}
                 onChange={(event) => setLanguageCode(event.target.value)}
-                className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10"
+                className="field"
               >
-                {VIDEO_LANGUAGES.map(([code, label]) => (
-                  <option key={code} value={code}>
-                    {label}
-                  </option>
-                ))}
+                {VIDEO_LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
               </select>
-              <p className="mt-2 text-xs leading-5 text-[#8a7f73]">
-                Sarvam translates every scene before the composition is sent to Daytona.
-              </p>
             </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Report title"
-                disabled={Boolean(transactionId)}
-                className="rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
-              />
-              <div className="relative">
-                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[#965307]">
-                  ₹
-                </span>
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  placeholder="Amount"
-                  disabled={Boolean(transactionId)}
-                  className="w-full rounded-xl border border-[#17130f]/15 bg-white py-3.5 pl-9 pr-4 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
-                />
-              </div>
-            </div>
-
-            <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              disabled={Boolean(transactionId)}
-              className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
-            >
-              <option value="">Choose a category</option>
-              <option value="food">Food</option>
-              <option value="transport">Transport</option>
-              <option value="education">Education</option>
-              <option value="medical">Medical</option>
-              <option value="entertainment">Entertainment</option>
-              <option value="shopping">Shopping</option>
-              <option value="utilities">Utilities</option>
-              <option value="rent">Rent</option>
-              <option value="other">Other</option>
-            </select>
-
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="What was this expense for?"
-              rows={3}
-              maxLength={90}
-              disabled={Boolean(transactionId)}
-              className="w-full resize-none rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
-            />
-
-            <button
-              onClick={generateVideo}
-              disabled={isLoading || (!transactionId && !amount)}
-              className="flex w-full items-center justify-center gap-3 rounded-xl bg-[#17130f] px-6 py-4 font-bold text-[#fff8e9] shadow-[0_12px_30px_rgba(23,19,15,0.16)] transition-[transform,background-color] duration-150 active:scale-[0.98] hover:bg-[#2a231c] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {isLoading ? (
-                <>
-                  <LoaderCircle className="size-5 animate-spin" />
-                  Rendering in Daytona
-                </>
-              ) : (
-                <>
-                  <Play className="size-5 fill-current" />
-                  Generate 12-second film
-                </>
-              )}
-            </button>
           </div>
 
-          {error && (
-            <div role="alert" className="mt-5 rounded-xl border border-red-900/15 bg-red-50 p-4 text-sm font-medium text-red-900">
-              {error}
-            </div>
-          )}
+          <div className="mt-5 grid grid-cols-3 gap-2 rounded-2xl bg-ink p-4 text-cream">
+            <div><span className="block text-xs text-white/45">Expenses</span><strong>{selectedTransactions.length}</strong></div>
+            <div><span className="block text-xs text-white/45">Questions</span><strong>{selectedConversations.length}</strong></div>
+            <div><span className="block text-xs text-white/45">Total</span><strong>₹{selectedTotal.toLocaleString('en-IN')}</strong></div>
+          </div>
+
+          <button
+            onClick={generateVideo}
+            disabled={isLoading || selectedTransactions.length === 0}
+            className="mt-5 flex w-full items-center justify-center gap-3 rounded-xl bg-copper px-6 py-4 font-bold text-white shadow-[0_12px_30px_rgba(169,86,19,0.2)] transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {isLoading ? <><LoaderCircle className="size-5 animate-spin" /> Rendering in Daytona</> : <><Play className="size-5 fill-current" /> Generate family report</>}
+          </button>
+          {error && <p role="alert" className="mt-4 rounded-xl border border-red-900/15 bg-red-50 p-4 text-sm font-semibold text-red-900">{error}</p>}
         </motion.section>
 
         <motion.section
-          initial={{ opacity: 0, transform: 'translateY(20px)' }}
-          animate={{ opacity: 1, transform: 'translateY(0)' }}
-          transition={{ delay: 0.08, duration: 0.48, ease: [0.23, 1, 0.32, 1] }}
-          className="overflow-hidden rounded-[2rem] bg-[#17130f] p-4 text-[#f7eedc] shadow-[0_30px_90px_rgba(23,19,15,0.24)] sm:p-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08 }}
+          className="overflow-hidden rounded-[2rem] bg-ink p-4 text-cream shadow-[0_30px_90px_rgba(23,19,15,0.24)] sm:p-6"
         >
           <div className="mb-5 flex items-center justify-between px-2 pt-1">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f4b942]">
-                Final render
-              </p>
-              <h2 className="mt-1 text-2xl font-bold">Your household story</h2>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">Final render</p>
+              <h2 className="mt-1 text-2xl font-bold">The household briefing</h2>
             </div>
-            <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/65">
-              1920 × 1080
-            </span>
+            <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/65">18 seconds · 4 scenes</span>
           </div>
 
           <div className="relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-[#221b15]">
             {video ? (
               <>
-                {!isPlayerReady && (
-                  <div className="absolute inset-0 z-10 grid place-items-center bg-[#221b15]">
-                    <LoaderCircle className="size-7 animate-spin text-[#f4b942]" />
-                  </div>
-                )}
+                {!isPlayerReady && <div className="absolute inset-0 z-10 grid place-items-center bg-[#221b15]"><LoaderCircle className="size-7 animate-spin text-saffron" /></div>}
                 <video
                   key={video.streamUrl}
                   src={video.streamUrl}
@@ -396,87 +453,43 @@ export default function VideoReports() {
                   playsInline
                   preload="metadata"
                   onLoadedData={() => setIsPlayerReady(true)}
-                  onError={() => setError('The video was rendered but the browser could not load the stream.')}
+                  onError={() => setError('The video rendered, but the browser could not load its stream.')}
                   className="h-full w-full object-contain"
                 />
               </>
             ) : isLoading ? (
               <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-                <div className="relative mb-7 grid size-20 place-items-center rounded-full border border-[#f4b942]/25">
-                  <span className="absolute inset-0 animate-ping rounded-full border border-[#f4b942]/20" />
-                  <LoaderCircle className="size-8 animate-spin text-[#f4b942]" />
-                </div>
-                <p className="text-xl font-bold">Composing the frames</p>
-                  <p className="mt-2 max-w-sm text-sm leading-6 text-white/55">
-                  Translating with Sarvam, searching HeyGen audio, rendering HyperFrames, validating the MP4, then downloading it before the sandbox closes.
-                  </p>
+                <LoaderCircle className="mb-6 size-10 animate-spin text-saffron" />
+                <p className="text-xl font-bold">Building the family narrative</p>
+                <p className="mt-2 max-w-md text-sm leading-6 text-white/55">Sarvam 105B reasons over the selected ledger, Sarvam Translate localizes it, and HyperFrames renders the final MP4.</p>
               </div>
             ) : (
               <div className="relative flex h-full flex-col justify-between overflow-hidden p-8 sm:p-10">
-                <div className="absolute -right-24 -top-24 size-80 rounded-full bg-[#d97706]/20 blur-3xl" />
-                <div className="relative flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f4b942]">
-                  <span className="h-0.5 w-12 bg-[#f4b942]" />
-                  Ready when you are
+                <div className="absolute -right-24 -top-24 size-80 rounded-full bg-copper/25 blur-3xl" />
+                <div className="relative flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-saffron">
+                  <span className="h-0.5 w-12 bg-saffron" /> Four-scene report
                 </div>
-                <div className="relative">
-                  <p className="max-w-lg text-4xl font-bold leading-[0.98] tracking-[-0.04em] sm:text-5xl">
-                    Your expense deserves more than a static card.
-                  </p>
-                  <p className="mt-4 max-w-md text-sm leading-6 text-white/55">
-                    Generate a tactile, shareable MP4 with editorial motion and licensed catalog audio.
-                  </p>
+                <div className="relative max-w-xl">
+                  <Film className="mb-5 size-10 text-saffron" />
+                  <p className="font-display text-4xl font-bold leading-[0.98] sm:text-5xl">Transactions become context. Questions become advice.</p>
+                  <p className="mt-4 text-sm leading-6 text-white/55">The film covers the total, selected expenses, Sarvam’s grounded insight, and a practical family takeaway.</p>
                 </div>
               </div>
             )}
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <Music2 className="mb-3 size-5 text-[#f4b942]" />
-              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Music</p>
-              <p className="mt-1 truncate text-sm font-semibold">{video?.music_name || 'HeyGen catalog'}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <Volume2 className="mb-3 size-5 text-[#f4b942]" />
-              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Sound effect</p>
-              <p className="mt-1 truncate text-sm font-semibold">{video?.sound_effect_name || 'Receipt transition'}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-              <Check className="mb-3 size-5 text-[#6ee7b7]" />
-              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Delivery</p>
-              <p className="mt-1 text-sm font-semibold">{video ? 'Downloaded safely' : 'MP4 after validation'}</p>
-            </div>
-          </div>
-
-          <div className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm">
-            <span className="flex items-center gap-2 text-white/55">
-              <Languages className="size-4 text-[#f4b942]" />
-              Video language
-            </span>
-            <strong>{video?.language_name || VIDEO_LANGUAGES.find(([code]) => code === languageCode)?.[1]}</strong>
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Music2 className="mb-3 size-5 text-saffron" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Music</p><p className="mt-1 truncate text-sm font-semibold">{video?.music_name || 'HeyGen catalog'}</p></div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Volume2 className="mb-3 size-5 text-saffron" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Transitions</p><p className="mt-1 truncate text-sm font-semibold">{video?.sound_effect_name || 'Paper + ledger cues'}</p></div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Check className="mb-3 size-5 text-[#6ee7b7]" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Included</p><p className="mt-1 text-sm font-semibold">{video ? `${video.transaction_count} expenses · ${video.conversation_count} asks` : 'Your selection'}</p></div>
           </div>
 
           <div className="mt-5 flex gap-3">
-            <button
-              onClick={downloadVideo}
-              disabled={!video}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#f7eedc] px-5 py-3.5 font-bold text-[#17130f] transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              <Download className="size-5" />
-              Download
-            </button>
-            <button
-              onClick={shareVideo}
-              disabled={!video || isSharing}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-5 py-3.5 font-bold transition-[transform,background-color] duration-150 active:scale-[0.98] hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              {isSharing ? <LoaderCircle className="size-5 animate-spin" /> : <Share2 className="size-5" />}
-              Share
-            </button>
+            <button onClick={downloadVideo} disabled={!video} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-cream px-5 py-3.5 font-bold text-ink disabled:opacity-35"><Download className="size-5" /> Download</button>
+            <button onClick={shareVideo} disabled={!video || isSharing} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-5 py-3.5 font-bold disabled:opacity-35">{isSharing ? <LoaderCircle className="size-5 animate-spin" /> : <Share2 className="size-5" />} Share</button>
           </div>
         </motion.section>
-        </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }

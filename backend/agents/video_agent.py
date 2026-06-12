@@ -63,75 +63,106 @@ class VideoAgent:
             .workdir("/home/daytona")
         )
 
-    def _render_html(self, expense_data: dict) -> str:
-        title = html.escape(str(expense_data.get("title") or "Expense Report"))
-        category = html.escape(str(expense_data.get("category") or "Other").title())
-        raw_description = str(
-            expense_data.get("description") or "Everyday household expense"
+    def _render_html(self, report_data: dict) -> str:
+        title = html.escape(
+            str(report_data.get("title") or "Our Household Money Story")
         )
-        if len(raw_description) > 90:
-            raw_description = f"{raw_description[:87].rstrip()}..."
-        description = html.escape(raw_description)
-        date = html.escape(str(expense_data.get("date") or "Today"))
         font_family = html.escape(
-            str(expense_data.get("font_family") or "Work Sans"),
+            str(report_data.get("font_family") or "Work Sans"),
             quote=True,
         )
         direction = (
-            "rtl" if expense_data.get("direction") == "rtl" else "ltr"
+            "rtl" if report_data.get("direction") == "rtl" else "ltr"
         )
         language_code = html.escape(
-            str(expense_data.get("language_code") or "en-IN"),
+            str(report_data.get("language_code") or "en-IN"),
             quote=True,
         )
-        amount = float(expense_data.get("amount") or 0)
+        total_amount = float(report_data.get("total_amount") or 0)
+        transactions = report_data.get("transactions") or []
+        rows = []
+        for index, transaction in enumerate(transactions[:5], start=1):
+            description = str(
+                transaction.get("description")
+                or transaction.get("vendor")
+                or "Household expense"
+            )
+            if len(description) > 54:
+                description = f"{description[:51].rstrip()}..."
+            metadata = " · ".join(
+                value
+                for value in (
+                    str(transaction.get("category") or "Other"),
+                    str(transaction.get("date") or ""),
+                )
+                if value
+            )
+            rows.append(
+                '<div class="transaction-row">'
+                f'<span class="row-number">{index:02d}</span>'
+                '<div class="row-copy">'
+                f'<strong class="localized">{html.escape(description)}</strong>'
+                f'<span class="localized">{html.escape(metadata)}</span>'
+                "</div>"
+                f'<b>₹{float(transaction.get("amount") or 0):,.0f}</b>'
+                "</div>"
+            )
 
         template = Template(
             (TEMPLATE_DIR / "expense_report.html").read_text(encoding="utf-8")
         )
         return template.substitute(
             title=title,
-            category=category,
-            description=description,
-            date=date,
-            amount=f"₹{amount:,.0f}",
+            headline=html.escape(str(report_data.get("headline") or "")),
+            insight=html.escape(str(report_data.get("insight") or "")),
+            advice=html.escape(str(report_data.get("advice") or "")),
+            conversation_summary=html.escape(
+                str(report_data.get("conversation_summary") or "")
+            ),
+            total_amount=f"₹{total_amount:,.0f}",
+            transaction_count=int(report_data.get("transaction_count") or 0),
+            conversation_count=int(report_data.get("conversation_count") or 0),
+            transaction_rows="\n".join(rows),
             font_family=font_family,
             direction=direction,
             language_code=language_code,
             brand_line=html.escape(
-                str(expense_data.get("brand_line") or "HisabVani")
+                str(report_data.get("brand_line") or "HisabVani")
             ),
-            expense_captured=html.escape(
-                str(expense_data.get("expense_captured") or "Expense captured")
+            report_kicker=html.escape(
+                str(report_data.get("report_kicker") or "Household money report")
             ),
-            spend_heading=html.escape(
+            ledger_heading=html.escape(
+                str(report_data.get("ledger_heading") or "What the family recorded")
+            ),
+            total_label=html.escape(
+                str(report_data.get("total_label") or "Total recorded")
+            ),
+            advice_kicker=html.escape(
+                str(report_data.get("advice_kicker") or "What Sarvam 105B noticed")
+            ),
+            question_heading=html.escape(
+                str(report_data.get("question_heading") or "Questions the family asked")
+            ),
+            transaction_label=html.escape(
+                str(report_data.get("transaction_label") or "transactions")
+            ),
+            conversation_label=html.escape(
+                str(report_data.get("conversation_label") or "conversations")
+            ),
+            saved_conversations_label=html.escape(
                 str(
-                    expense_data.get("spend_heading")
-                    or "A clear look at the spend"
+                    report_data.get("saved_conversations_label")
+                    or "saved conversations"
                 )
             ),
-            description_label=html.escape(
-                str(
-                    expense_data.get("description_label")
-                    or "What it was for"
-                )
+            closing_kicker=html.escape(
+                str(report_data.get("closing_kicker") or "A clearer month starts here")
             ),
-            summary_kicker=html.escape(
+            closing_subtitle=html.escape(
                 str(
-                    expense_data.get("summary_kicker")
-                    or "Logged. Understood. Remembered."
-                )
-            ),
-            summary_title=html.escape(
-                str(
-                    expense_data.get("summary_title")
-                    or "Every rupee tells your family story."
-                )
-            ),
-            summary_subtitle=html.escape(
-                str(
-                    expense_data.get("summary_subtitle")
-                    or "Voice and vision finance for Indian households"
+                    report_data.get("closing_subtitle")
+                    or "Voice, vision, and reasoning for Indian households"
                 )
             ),
         )
@@ -283,7 +314,7 @@ class VideoAgent:
             f"Rendered MP4 exists but could not be downloaded: {last_error}"
         )
 
-    def render_expense_video(self, expense_data: dict) -> VideoRenderResult:
+    def render_report_video(self, report_data: dict) -> VideoRenderResult:
         if not self.heygen_api_key:
             raise RuntimeError("HEYGEN_API_KEY is required to add HeyGen catalog audio")
 
@@ -321,14 +352,20 @@ class VideoAgent:
             self._run(
                 sandbox,
                 (
-                    "npm install --no-save gsap@3.14.2 && "
-                    "cp node_modules/gsap/dist/gsap.min.js gsap.min.js"
+                    "npm install --no-save gsap@3.14.2 "
+                    "@fontsource-variable/fraunces "
+                    "@fontsource-variable/work-sans && "
+                    "cp node_modules/gsap/dist/gsap.min.js gsap.min.js && "
+                    "cp node_modules/@fontsource-variable/fraunces/files/"
+                    "fraunces-latin-wght-normal.woff2 fraunces-latin.woff2 && "
+                    "cp node_modules/@fontsource-variable/work-sans/files/"
+                    "work-sans-latin-wght-normal.woff2 work-sans-latin.woff2"
                 ),
                 timeout=300,
             )
 
             sandbox.fs.upload_file_stream(
-                self._render_html(expense_data).encode("utf-8"),
+                self._render_html(report_data).encode("utf-8"),
                 f"{PROJECT_ROOT}/index.html",
             )
             sandbox.fs.upload_file_stream(
@@ -340,7 +377,7 @@ class VideoAgent:
                 f"{PROJECT_ROOT}/fetch_audio.mjs",
             )
 
-            category = str(expense_data.get("category") or "household")
+            category = "household finance report"
             audio_result = sandbox.process.exec(
                 "node fetch_audio.mjs",
                 cwd=PROJECT_ROOT,
@@ -405,9 +442,9 @@ class VideoAgent:
             self._run(
                 sandbox,
                 (
-                    "ffmpeg -y -stream_loop -1 -i music-source -t 12 "
+                    "ffmpeg -y -stream_loop -1 -i music-source -t 18 "
                     '-af "volume=0.34,afade=t=in:st=0:d=0.8,'
-                    'afade=t=out:st=10.7:d=1.3" '
+                    'afade=t=out:st=16.5:d=1.5" '
                     "-c:a aac -b:a 192k background.m4a && "
                     "ffmpeg -y -i transition-source -t 1.2 "
                     '-af "volume=0.72,afade=t=in:st=0:d=0.04,'
@@ -455,7 +492,7 @@ class VideoAgent:
             stream_types = {
                 stream["codec_type"] for stream in probe_data.get("streams", [])
             }
-            if duration < 11.5 or not {"video", "audio"}.issubset(stream_types):
+            if duration < 17.5 or not {"video", "audio"}.issubset(stream_types):
                 raise RuntimeError(
                     f"Rendered MP4 failed validation: duration={duration}, "
                     f"streams={stream_types}"
@@ -482,3 +519,6 @@ class VideoAgent:
                     "but the MP4 download failed",
                     sandbox.id,
                 )
+
+    def render_expense_video(self, expense_data: dict) -> VideoRenderResult:
+        return self.render_report_video(expense_data)

@@ -126,16 +126,3 @@ def test_compute_agent_direct():
     assert "Test" in result["stdout"]
 
     agent.cleanup()
-
-
-def test_get_sample_data(client):
-    response = client.get("/api/sample-data")
-    assert response.status_code == 200
-    data = response.json()
-    assert "transactions" in data
-    assert "expenses_by_category" in data
-    assert "total_expenses" in data
-    assert "count" in data
-    assert isinstance(data["transactions"], list)
-    assert isinstance(data["expenses_by_category"], dict)
-    assert isinstance(data["total_expenses"], (int, float))
