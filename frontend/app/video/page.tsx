@@ -2,8 +2,88 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Video, Download, ArrowLeft, Share2, Film } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  Download,
+  Film,
+  Languages,
+  LoaderCircle,
+  Music2,
+  Play,
+  Share2,
+  Sparkles,
+  Volume2,
+} from 'lucide-react';
 import Link from 'next/link';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+const VIDEO_LANGUAGES = [
+  ['en-IN', 'English'],
+  ['hi-IN', 'हिन्दी · Hindi'],
+  ['bn-IN', 'বাংলা · Bengali'],
+  ['gu-IN', 'ગુજરાતી · Gujarati'],
+  ['kn-IN', 'ಕನ್ನಡ · Kannada'],
+  ['ml-IN', 'മലയാളം · Malayalam'],
+  ['mr-IN', 'मराठी · Marathi'],
+  ['od-IN', 'ଓଡ଼ିଆ · Odia'],
+  ['pa-IN', 'ਪੰਜਾਬੀ · Punjabi'],
+  ['ta-IN', 'தமிழ் · Tamil'],
+  ['te-IN', 'తెలుగు · Telugu'],
+  ['ur-IN', 'اردو · Urdu'],
+  ['as-IN', 'অসমীয়া · Assamese'],
+  ['brx-IN', 'बड़ो · Bodo'],
+  ['doi-IN', 'डोगरी · Dogri'],
+  ['kok-IN', 'कोंकणी · Konkani'],
+  ['ks-IN', 'کٲشُر · Kashmiri'],
+  ['mai-IN', 'मैथिली · Maithili'],
+  ['mni-IN', 'মৈতৈলোন্ · Manipuri'],
+  ['ne-IN', 'नेपाली · Nepali'],
+  ['sa-IN', 'संस्कृतम् · Sanskrit'],
+  ['sat-IN', 'ᱥᱟᱱᱛᱟᱲᱤ · Santali'],
+  ['sd-IN', 'سنڌي · Sindhi'],
+] as const;
+
+type VideoResult = {
+  video_id: string;
+  video_url: string;
+  title: string;
+  amount: number;
+  category: string;
+  description: string;
+  duration_seconds: number;
+  audio_provider: string;
+  music_name?: string;
+  sound_effect_name?: string;
+  language_code: string;
+  language_name: string;
+};
+
+type ReadyVideo = VideoResult & {
+  streamUrl: string;
+};
+
+type VideoJobCreated = {
+  job_id: string;
+  status: string;
+  status_url: string;
+};
+
+type VideoJobStatus = {
+  job_id: string;
+  status: 'queued' | 'rendering' | 'completed' | 'failed';
+  result?: VideoResult;
+  error?: string;
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong while generating the video.';
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
 
 export default function VideoReports() {
   const [transactionId, setTransactionId] = useState('');
@@ -11,216 +91,397 @@ export default function VideoReports() {
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
-  const [videoUrl, setVideoUrl] = useState('');
+  const [languageCode, setLanguageCode] = useState('en-IN');
+  const [video, setVideo] = useState<ReadyVideo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [error, setError] = useState('');
 
   const generateVideo = async () => {
     setIsLoading(true);
+    setIsPlayerReady(false);
     setError('');
-    setVideoUrl('');
+    setVideo(null);
 
     try {
       const payload = transactionId
-        ? { transaction_id: parseInt(transactionId) }
+        ? {
+            transaction_id: Number.parseInt(transactionId, 10),
+            language_code: languageCode,
+          }
         : {
             title: title || 'Expense Report',
-            amount: parseFloat(amount) || 0,
+            amount: Number.parseFloat(amount) || 0,
             category: category || 'other',
-            description: description || ''
+            description: description || '',
+            language_code: languageCode,
           };
 
-      const res = await fetch('http://localhost:8000/api/generate-video', {
+      const response = await fetch(`${API_BASE}/api/generate-video`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
+      const data = (await response.json()) as VideoJobCreated & {
+        detail?: string;
+      };
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Failed to generate video');
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to generate video');
       }
 
-      const data = await res.json();
-      const blob = base64ToBlob(data.video_base64, 'video/mp4');
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
-    } catch (err: any) {
-      setError(err.message);
+      const statusUrl = new URL(data.status_url, API_BASE).toString();
+      let result: VideoResult | undefined;
+
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        await wait(attempt === 0 ? 500 : 2_000);
+        const statusResponse = await fetch(statusUrl, { cache: 'no-store' });
+        const job = (await statusResponse.json()) as VideoJobStatus & {
+          detail?: string;
+        };
+
+        if (!statusResponse.ok) {
+          throw new Error(job.detail || 'Could not check the video render status.');
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Video rendering failed.');
+        }
+        if (job.status === 'completed' && job.result) {
+          result = job.result;
+          break;
+        }
+      }
+
+      if (!result) {
+        throw new Error('Video rendering timed out after 30 minutes.');
+      }
+
+      setVideo({
+        ...result,
+        streamUrl: new URL(result.video_url, API_BASE).toString(),
+      });
+    } catch (requestError: unknown) {
+      setError(errorMessage(requestError));
     } finally {
       setIsLoading(false);
     }
   };
 
   const downloadVideo = () => {
-    if (!videoUrl) return;
-    const a = document.createElement('a');
-    a.href = videoUrl;
-    a.download = `expense_${transactionId || 'report'}.mp4`;
-    a.click();
+    if (!video) return;
+    window.location.assign(`${video.streamUrl}?download=true`);
   };
 
-  const shareVideo = () => {
-    if (!videoUrl) return;
-    const text = encodeURIComponent(`Check out my expense report: ${title} - ₹${amount}`);
-    window.open(`https://wa.me/?text=${text}`, '_blank');
-  };
+  const shareVideo = async () => {
+    if (!video) return;
+    setIsSharing(true);
+    setError('');
 
-  const base64ToBlob = (base64: string, mimeType: string) => {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    try {
+      const response = await fetch(video.streamUrl);
+      if (!response.ok) throw new Error('Could not prepare the video for sharing.');
+      const blob = await response.blob();
+      const file = new File([blob], `hisabvani-${video.video_id}.mp4`, {
+        type: 'video/mp4',
+      });
+
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          title: video.title,
+          text: `HisabVani expense report for ₹${video.amount.toLocaleString('en-IN')}`,
+          files: [file],
+        });
+      } else {
+        downloadVideo();
+      }
+    } catch (shareError: unknown) {
+      setError(errorMessage(shareError));
+    } finally {
+      setIsSharing(false);
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-white/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center gap-6">
-          <Link href="/" className="text-foreground hover:text-primary transition-colors">
-            <ArrowLeft className="w-6 h-6" />
-          </Link>
-          <h1 className="text-3xl font-display font-bold text-primary">Video Reports</h1>
+    <div className="min-h-screen bg-[#f3eadb] text-[#17130f]">
+      <header className="sticky top-0 z-50 border-b border-[#17130f]/10 bg-[#f3eadb]/90 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              aria-label="Back to dashboard"
+              className="grid size-11 place-items-center rounded-full border border-[#17130f]/15 transition-[transform,background-color] duration-150 active:scale-[0.97] hover:bg-white/70"
+            >
+              <ArrowLeft className="size-5" />
+            </Link>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#965307]">
+                HisabVani Studio
+              </p>
+              <h1 className="text-2xl font-bold sm:text-3xl">Expense films</h1>
+            </div>
+          </div>
+          <div className="hidden items-center gap-2 rounded-full border border-[#065f46]/20 bg-[#065f46]/8 px-4 py-2 text-sm font-semibold text-[#065f46] sm:flex">
+            <Sparkles className="size-4" />
+            HyperFrames + HeyGen audio
+          </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-sm border border-border p-8 mb-8"
+      <main className="mx-auto grid max-w-7xl gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[0.88fr_1.12fr] lg:py-12">
+        <motion.section
+          initial={{ opacity: 0, transform: 'translateY(16px)' }}
+          animate={{ opacity: 1, transform: 'translateY(0)' }}
+          transition={{ duration: 0.42, ease: [0.23, 1, 0.32, 1] }}
+          className="rounded-[2rem] border border-[#17130f]/10 bg-[#fffaf0] p-6 shadow-[0_24px_80px_rgba(83,57,27,0.09)] sm:p-8"
         >
-          <div className="flex items-center gap-3 mb-6">
-            <Film className="w-8 h-8 text-primary" />
+          <div className="mb-8 flex items-start justify-between gap-5">
             <div>
-              <h2 className="text-2xl font-display font-semibold">Generate Expense Video</h2>
-              <p className="text-muted text-sm">Create a shareable video from your expense data</p>
+              <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-[#d97706]">
+                Build your story
+              </p>
+              <h2 className="max-w-md text-4xl font-bold leading-[0.98] tracking-[-0.04em] sm:text-5xl">
+                Turn one expense into a film.
+              </h2>
+            </div>
+            <div className="grid size-14 shrink-0 place-items-center rounded-2xl bg-[#17130f] text-[#f4b942]">
+              <Film className="size-7" />
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="border-b border-border pb-4 mb-4">
-              <label className="block text-sm font-medium text-muted mb-2">
-                Option 1: From Transaction ID
+          <div className="space-y-5">
+            <div>
+              <label htmlFor="transaction-id" className="mb-2 block text-sm font-semibold">
+                Use a saved transaction
               </label>
               <input
+                id="transaction-id"
                 type="number"
                 value={transactionId}
-                onChange={(e) => setTransactionId(e.target.value)}
-                placeholder="Enter transaction ID"
-                className="w-full px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+                onChange={(event) => setTransactionId(event.target.value)}
+                placeholder="Transaction ID"
+                className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10"
               />
             </div>
 
-            <div className="text-center text-muted text-sm my-4">— OR —</div>
+            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.18em] text-[#8a7f73]">
+              <span className="h-px flex-1 bg-[#17130f]/10" />
+              or enter it manually
+              <span className="h-px flex-1 bg-[#17130f]/10" />
+            </div>
 
-            <div className="space-y-4">
-              <label className="block text-sm font-medium text-muted mb-2">
-                Option 2: Manual Entry
+            <div>
+              <label htmlFor="video-language" className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                <Languages className="size-4 text-[#965307]" />
+                Video language
               </label>
+              <select
+                id="video-language"
+                value={languageCode}
+                onChange={(event) => setLanguageCode(event.target.value)}
+                className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10"
+              >
+                {VIDEO_LANGUAGES.map(([code, label]) => (
+                  <option key={code} value={code}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs leading-5 text-[#8a7f73]">
+                Sarvam translates every scene before the composition is sent to Daytona.
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
               <input
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Title (optional)"
-                className="w-full px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Report title"
+                disabled={Boolean(transactionId)}
+                className="rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
               />
-              <input
-                type="number"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Amount"
-                className="w-full px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
-              >
-                <option value="">Select Category</option>
-                <option value="food">Food</option>
-                <option value="transport">Transport</option>
-                <option value="education">Education</option>
-                <option value="medical">Medical</option>
-                <option value="entertainment">Entertainment</option>
-                <option value="shopping">Shopping</option>
-                <option value="utilities">Utilities</option>
-                <option value="rent">Rent</option>
-                <option value="other">Other</option>
-              </select>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description"
-                rows={3}
-                className="w-full px-4 py-3 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-primary"
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[#965307]">
+                  ₹
+                </span>
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="Amount"
+                  disabled={Boolean(transactionId)}
+                  className="w-full rounded-xl border border-[#17130f]/15 bg-white py-3.5 pl-9 pr-4 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
+                />
+              </div>
             </div>
+
+            <select
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              disabled={Boolean(transactionId)}
+              className="w-full rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
+            >
+              <option value="">Choose a category</option>
+              <option value="food">Food</option>
+              <option value="transport">Transport</option>
+              <option value="education">Education</option>
+              <option value="medical">Medical</option>
+              <option value="entertainment">Entertainment</option>
+              <option value="shopping">Shopping</option>
+              <option value="utilities">Utilities</option>
+              <option value="rent">Rent</option>
+              <option value="other">Other</option>
+            </select>
+
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="What was this expense for?"
+              rows={3}
+              maxLength={90}
+              disabled={Boolean(transactionId)}
+              className="w-full resize-none rounded-xl border border-[#17130f]/15 bg-white px-4 py-3.5 outline-none transition-[border-color,box-shadow] focus:border-[#d97706] focus:ring-4 focus:ring-[#d97706]/10 disabled:opacity-45"
+            />
 
             <button
               onClick={generateVideo}
               disabled={isLoading || (!transactionId && !amount)}
-              className="w-full px-6 py-4 bg-primary text-white rounded-lg hover:bg-primary-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="flex w-full items-center justify-center gap-3 rounded-xl bg-[#17130f] px-6 py-4 font-bold text-[#fff8e9] shadow-[0_12px_30px_rgba(23,19,15,0.16)] transition-[transform,background-color] duration-150 active:scale-[0.98] hover:bg-[#2a231c] disabled:cursor-not-allowed disabled:opacity-45"
             >
               {isLoading ? (
                 <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Generating Video...
+                  <LoaderCircle className="size-5 animate-spin" />
+                  Rendering in Daytona
                 </>
               ) : (
                 <>
-                  <Video className="w-5 h-5" />
-                  Generate Video
+                  <Play className="size-5 fill-current" />
+                  Generate 12-second film
                 </>
               )}
             </button>
           </div>
 
           {error && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800"
-            >
+            <div role="alert" className="mt-5 rounded-xl border border-red-900/15 bg-red-50 p-4 text-sm font-medium text-red-900">
               {error}
-            </motion.div>
-          )}
-        </motion.div>
-
-        {videoUrl && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl shadow-sm border border-border p-8"
-          >
-            <h3 className="text-xl font-display font-semibold mb-4">Your Video</h3>
-            <video
-              src={videoUrl}
-              controls
-              className="w-full rounded-lg mb-6"
-              style={{ maxHeight: '500px' }}
-            />
-            <div className="flex gap-4">
-              <button
-                onClick={downloadVideo}
-                className="flex-1 px-6 py-3 bg-secondary text-white rounded-lg hover:bg-secondary/90 transition-colors flex items-center justify-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Download
-              </button>
-              <button
-                onClick={shareVideo}
-                className="flex-1 px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
-              >
-                <Share2 className="w-5 h-5" />
-                Share
-              </button>
             </div>
-          </motion.div>
-        )}
+          )}
+        </motion.section>
+
+        <motion.section
+          initial={{ opacity: 0, transform: 'translateY(20px)' }}
+          animate={{ opacity: 1, transform: 'translateY(0)' }}
+          transition={{ delay: 0.08, duration: 0.48, ease: [0.23, 1, 0.32, 1] }}
+          className="overflow-hidden rounded-[2rem] bg-[#17130f] p-4 text-[#f7eedc] shadow-[0_30px_90px_rgba(23,19,15,0.24)] sm:p-6"
+        >
+          <div className="mb-5 flex items-center justify-between px-2 pt-1">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#f4b942]">
+                Final render
+              </p>
+              <h2 className="mt-1 text-2xl font-bold">Your household story</h2>
+            </div>
+            <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/65">
+              1920 × 1080
+            </span>
+          </div>
+
+          <div className="relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-[#221b15]">
+            {video ? (
+              <>
+                {!isPlayerReady && (
+                  <div className="absolute inset-0 z-10 grid place-items-center bg-[#221b15]">
+                    <LoaderCircle className="size-7 animate-spin text-[#f4b942]" />
+                  </div>
+                )}
+                <video
+                  key={video.streamUrl}
+                  src={video.streamUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onLoadedData={() => setIsPlayerReady(true)}
+                  onError={() => setError('The video was rendered but the browser could not load the stream.')}
+                  className="h-full w-full object-contain"
+                />
+              </>
+            ) : isLoading ? (
+              <div className="flex h-full flex-col items-center justify-center px-8 text-center">
+                <div className="relative mb-7 grid size-20 place-items-center rounded-full border border-[#f4b942]/25">
+                  <span className="absolute inset-0 animate-ping rounded-full border border-[#f4b942]/20" />
+                  <LoaderCircle className="size-8 animate-spin text-[#f4b942]" />
+                </div>
+                <p className="text-xl font-bold">Composing the frames</p>
+                  <p className="mt-2 max-w-sm text-sm leading-6 text-white/55">
+                  Translating with Sarvam, searching HeyGen audio, rendering HyperFrames, validating the MP4, then downloading it before the sandbox closes.
+                  </p>
+              </div>
+            ) : (
+              <div className="relative flex h-full flex-col justify-between overflow-hidden p-8 sm:p-10">
+                <div className="absolute -right-24 -top-24 size-80 rounded-full bg-[#d97706]/20 blur-3xl" />
+                <div className="relative flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[#f4b942]">
+                  <span className="h-0.5 w-12 bg-[#f4b942]" />
+                  Ready when you are
+                </div>
+                <div className="relative">
+                  <p className="max-w-lg text-4xl font-bold leading-[0.98] tracking-[-0.04em] sm:text-5xl">
+                    Your expense deserves more than a static card.
+                  </p>
+                  <p className="mt-4 max-w-md text-sm leading-6 text-white/55">
+                    Generate a tactile, shareable MP4 with editorial motion and licensed catalog audio.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <Music2 className="mb-3 size-5 text-[#f4b942]" />
+              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Music</p>
+              <p className="mt-1 truncate text-sm font-semibold">{video?.music_name || 'HeyGen catalog'}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <Volume2 className="mb-3 size-5 text-[#f4b942]" />
+              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Sound effect</p>
+              <p className="mt-1 truncate text-sm font-semibold">{video?.sound_effect_name || 'Receipt transition'}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <Check className="mb-3 size-5 text-[#6ee7b7]" />
+              <p className="text-xs uppercase tracking-[0.16em] text-white/45">Delivery</p>
+              <p className="mt-1 text-sm font-semibold">{video ? 'Downloaded safely' : 'MP4 after validation'}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm">
+            <span className="flex items-center gap-2 text-white/55">
+              <Languages className="size-4 text-[#f4b942]" />
+              Video language
+            </span>
+            <strong>{video?.language_name || VIDEO_LANGUAGES.find(([code]) => code === languageCode)?.[1]}</strong>
+          </div>
+
+          <div className="mt-5 flex gap-3">
+            <button
+              onClick={downloadVideo}
+              disabled={!video}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#f7eedc] px-5 py-3.5 font-bold text-[#17130f] transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <Download className="size-5" />
+              Download
+            </button>
+            <button
+              onClick={shareVideo}
+              disabled={!video || isSharing}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 px-5 py-3.5 font-bold transition-[transform,background-color] duration-150 active:scale-[0.98] hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              {isSharing ? <LoaderCircle className="size-5 animate-spin" /> : <Share2 className="size-5" />}
+              Share
+            </button>
+          </div>
+        </motion.section>
       </main>
     </div>
   );
