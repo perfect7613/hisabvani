@@ -85,6 +85,14 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong while generating the report.';
 }
 
+function cleanConversationPreview(value: string) {
+  return value
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/[`*_#>-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function VideoReports() {
   const ledger = useHouseholdLedger();
   const initializedTransactions = useRef(false);
@@ -220,7 +228,7 @@ export default function VideoReports() {
   };
 
   return (
-    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-7xl px-5 py-10 sm:px-8 lg:py-14">
+    <main className="mx-auto min-h-[calc(100vh-70px)] max-w-[90rem] px-5 py-10 sm:px-8 lg:py-14">
       <div className="mb-10 grid gap-7 lg:grid-cols-[1fr_0.62fr] lg:items-end">
         <div>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-leaf/20 bg-leaf/8 px-4 py-2 text-sm font-bold text-leaf">
@@ -242,11 +250,11 @@ export default function VideoReports() {
         </div>
       </div>
 
-      <div className="grid gap-7 xl:grid-cols-[0.9fr_1.1fr]">
+      <div className="grid items-start gap-7 xl:grid-cols-[minmax(0,1.04fr)_minmax(32rem,0.96fr)]">
         <motion.section
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          className="paper-card rounded-[2rem] p-6 sm:p-8"
+          className="paper-card min-w-0 rounded-[2rem] p-6 sm:p-8"
         >
           <div className="mb-7 flex items-start justify-between gap-5">
             <div>
@@ -298,7 +306,7 @@ export default function VideoReports() {
                   return (
                     <label
                       key={transaction.id}
-                      className={`flex cursor-pointer items-center gap-4 rounded-xl border p-4 transition-colors ${
+                      className={`flex min-w-0 cursor-pointer items-center gap-4 rounded-xl border p-4 transition-colors ${
                         checked ? 'border-copper/35 bg-saffron/12' : 'border-ink/10 bg-white/50'
                       }`}
                     >
@@ -318,10 +326,10 @@ export default function VideoReports() {
                         {transaction.source === 'bill' ? <ReceiptText className="size-5" /> : <Mic2 className="size-5" />}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <strong className="block truncate text-sm">{transaction.description || transaction.vendor}</strong>
+                        <strong className="block line-clamp-2 break-words text-sm">{transaction.description || transaction.vendor}</strong>
                         <span className="text-xs capitalize text-muted">{transaction.category} · {transaction.date}</span>
                       </span>
-                      <strong className="font-display text-lg">₹{transaction.amount.toLocaleString('en-IN')}</strong>
+                      <strong className="shrink-0 font-display text-lg">₹{transaction.amount.toLocaleString('en-IN')}</strong>
                     </label>
                   );
                 })}
@@ -362,7 +370,7 @@ export default function VideoReports() {
               {ledger.conversations.map((conversation) => {
                 const checked = selectedConversationIds.includes(conversation.id);
                 return (
-                  <label key={conversation.id} className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${
+                  <label key={conversation.id} className={`flex min-w-0 cursor-pointer gap-3 overflow-hidden rounded-xl border p-4 ${
                     checked ? 'border-leaf/30 bg-leaf/8' : 'border-ink/10 bg-white/50'
                   }`}>
                     <input
@@ -375,9 +383,13 @@ export default function VideoReports() {
                       )}
                       className="mt-1 size-4 accent-leaf"
                     />
-                    <span className="min-w-0">
-                      <strong className="block truncate text-sm">{conversation.question}</strong>
-                      <span className="mt-1 block line-clamp-2 text-xs leading-5 text-muted">{conversation.answer}</span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block line-clamp-2 break-words text-sm leading-5 [overflow-wrap:anywhere]">
+                        {cleanConversationPreview(conversation.question)}
+                      </strong>
+                      <span className="mt-1 block line-clamp-3 break-words text-xs leading-5 text-muted [overflow-wrap:anywhere]">
+                        {cleanConversationPreview(conversation.answer)}
+                      </span>
                     </span>
                   </label>
                 );
@@ -432,17 +444,17 @@ export default function VideoReports() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.08 }}
-          className="overflow-hidden rounded-[2rem] bg-ink p-4 text-cream shadow-[0_30px_90px_rgba(23,19,15,0.24)] sm:p-6"
+          className="min-w-0 self-start overflow-hidden rounded-[2rem] bg-ink p-4 text-cream shadow-[0_30px_90px_rgba(23,19,15,0.24)] sm:p-6 xl:sticky xl:top-24"
         >
-          <div className="mb-5 flex items-center justify-between px-2 pt-1">
-            <div>
+          <div className="mb-5 flex items-start justify-between gap-4 px-2 pt-1">
+            <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-saffron">Final render</p>
-              <h2 className="mt-1 text-2xl font-bold">The household briefing</h2>
+              <h2 className="mt-1 text-2xl font-bold leading-tight">The household briefing</h2>
             </div>
-            <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/65">18 seconds · 4 scenes</span>
+            <span className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/65">18 sec · 4 scenes</span>
           </div>
 
-          <div className="relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-[#221b15]">
+          <div className="relative aspect-video min-h-72 overflow-hidden rounded-2xl border border-white/10 bg-[#221b15]">
             {video ? (
               <>
                 {!isPlayerReady && <div className="absolute inset-0 z-10 grid place-items-center bg-[#221b15]"><LoaderCircle className="size-7 animate-spin text-saffron" /></div>}
@@ -458,10 +470,19 @@ export default function VideoReports() {
                 />
               </>
             ) : isLoading ? (
-              <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-                <LoaderCircle className="mb-6 size-10 animate-spin text-saffron" />
-                <p className="text-xl font-bold">Building the family narrative</p>
-                <p className="mt-2 max-w-md text-sm leading-6 text-white/55">Sarvam 105B reasons over the selected ledger, Sarvam Translate localizes it, and HyperFrames renders the final MP4.</p>
+              <div className="relative flex h-full flex-col items-center justify-center overflow-hidden px-6 py-8 text-center sm:px-10">
+                <div className="absolute inset-x-12 top-1/2 h-24 -translate-y-1/2 rounded-full bg-copper/20 blur-3xl" />
+                <span className="relative mb-5 grid size-14 place-items-center rounded-2xl border border-saffron/25 bg-saffron/10">
+                  <LoaderCircle className="size-7 animate-spin text-saffron" />
+                </span>
+                <p className="relative text-[0.65rem] font-bold uppercase tracking-[0.2em] text-saffron">Daytona render in progress</p>
+                <p className="relative mt-2 font-display text-2xl font-bold leading-tight">Building your family money story</p>
+                <p className="relative mt-3 max-w-sm text-sm leading-6 text-white/58">Sarvam reasons, translates, and hands the finished story to HyperFrames.</p>
+                <div className="relative mt-5 flex flex-wrap justify-center gap-2 text-[0.65rem] font-bold uppercase tracking-[0.12em] text-white/55">
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Reasoning</span>
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Localization</span>
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Animation</span>
+                </div>
               </div>
             ) : (
               <div className="relative flex h-full flex-col justify-between overflow-hidden p-8 sm:p-10">
@@ -478,10 +499,19 @@ export default function VideoReports() {
             )}
           </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Music2 className="mb-3 size-5 text-saffron" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Music</p><p className="mt-1 truncate text-sm font-semibold">{video?.music_name || 'HeyGen catalog'}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Volume2 className="mb-3 size-5 text-saffron" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Transitions</p><p className="mt-1 truncate text-sm font-semibold">{video?.sound_effect_name || 'Paper + ledger cues'}</p></div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4"><Check className="mb-3 size-5 text-[#6ee7b7]" /><p className="text-xs uppercase tracking-[0.16em] text-white/45">Included</p><p className="mt-1 text-sm font-semibold">{video ? `${video.transaction_count} expenses · ${video.conversation_count} asks` : 'Your selection'}</p></div>
+          <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+            <div className="flex min-w-0 items-center gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-saffron/10"><Music2 className="size-5 text-saffron" /></span>
+              <span className="min-w-0"><span className="block text-[0.65rem] uppercase tracking-[0.16em] text-white/45">Music</span><strong className="mt-1 block break-words text-sm">{video?.music_name || 'HeyGen catalog'}</strong></span>
+            </div>
+            <div className="flex min-w-0 items-center gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-saffron/10"><Volume2 className="size-5 text-saffron" /></span>
+              <span className="min-w-0"><span className="block text-[0.65rem] uppercase tracking-[0.16em] text-white/45">Transitions</span><strong className="mt-1 block break-words text-sm">{video?.sound_effect_name || 'Paper + ledger cues'}</strong></span>
+            </div>
+            <div className="flex min-w-0 items-center gap-4 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#6ee7b7]/10"><Check className="size-5 text-[#6ee7b7]" /></span>
+              <span className="min-w-0"><span className="block text-[0.65rem] uppercase tracking-[0.16em] text-white/45">Included</span><strong className="mt-1 block break-words text-sm">{video ? `${video.transaction_count} expenses · ${video.conversation_count} asks` : 'Your selected records'}</strong></span>
+            </div>
           </div>
 
           <div className="mt-5 flex gap-3">
